@@ -158,6 +158,14 @@
     }
 
     .hidden { display: none; }
+
+    /* Blur all amounts when hide-amounts mode is on */
+    :root[data-hide-amounts="1"] .amt {
+      filter: blur(6px);
+      transition: filter 0.2s;
+      user-select: none;
+    }
+    .amt { transition: filter 0.2s; }
   </style>
 </head>
 <body>
@@ -198,6 +206,36 @@
       return b.weeks.reduce((sum, w, i) => sum + (isWeekPaid(w) ? getBorrowerWeekAmount(b, i) : 0), 0);
     }
 
+    // Check if a borrower is overdue based on their Week 1 payment date
+    // Returns: { overdue: bool, daysLate: number, nextWeekNum: number }
+    function getOverdueStatus(b) {
+      const firstWeek = b.weeks[0];
+      // Need Week 1 to be paid to start the clock
+      if (!isWeekPaid(firstWeek)) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
+
+      // Find first unpaid week
+      const nextIdx = b.weeks.findIndex(w => !isWeekPaid(w));
+      if (nextIdx === -1) return { overdue: false, daysLate: 0, nextWeekNum: 0 }; // all paid
+
+      // Expected date for the next unpaid week = Week 1 date + (nextIdx * 7 days)
+      const week1Date = new Date(getWeekDate(firstWeek));
+      const expectedDate = new Date(week1Date);
+      expectedDate.setDate(week1Date.getDate() + nextIdx * 7);
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      expectedDate.setHours(0, 0, 0, 0);
+
+      const diffMs = today - expectedDate;
+      const daysLate = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+      return {
+        overdue: daysLate > 0,
+        daysLate: daysLate,
+        nextWeekNum: nextIdx + 1,
+      };
+    }
+
     let borrowers = [];
     let currentView = "home";
     let selectedId = null;
@@ -217,6 +255,7 @@
     let customPrincipal = "";
     let customWeekly = "";
     let customWeeks = "";
+    let hideAmounts = false;
 
     // ===== STORAGE =====
     function loadData() {
@@ -334,10 +373,23 @@
     }
 
     // ===== HELPERS =====
-    function fmt(n) { return "₹" + Number(n).toLocaleString("en-IN"); }
+    function fmt(n) {
+      const formatted = "₹" + Number(n).toLocaleString("en-IN");
+      return `<span class="amt">${formatted}</span>`;
+    }
+    function toggleHideAmounts() {
+      hideAmounts = !hideAmounts;
+      document.documentElement.setAttribute("data-hide-amounts", hideAmounts ? "1" : "0");
+      render();
+    }
     function fmtDate(iso) {
       if (!iso) return "";
-      return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+      return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+    }
+    // Return YYYY-MM-DD in UTC (matches what date inputs expect for stored UTC dates)
+    function toUtcDateStr(iso) {
+      if (!iso) return "";
+      return new Date(iso).toISOString().slice(0, 10);
     }
     function isWeekPaid(w) { return typeof w === "boolean" ? w : w?.paid; }
     function getWeekDate(w) { return typeof w === "boolean" ? null : w?.date; }
@@ -421,6 +473,53 @@
       render();
     }
 
+    // ===== DIRECTORY HANDLE STORAGE (IndexedDB) =====
+    // File System Access API returns a handle object that can't be stored in localStorage.
+    // We persist it in IndexedDB so the same folder is remembered across sessions.
+    function openHandleDB() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open("creditrack-handles", 1);
+        req.onupgradeneeded = () => {
+          req.result.createObjectStore("handles");
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+    async function saveDirHandle(handle) {
+      try {
+        const db = await openHandleDB();
+        const tx = db.transaction("handles", "readwrite");
+        tx.objectStore("handles").put(handle, "exportDir");
+        return new Promise(res => { tx.oncomplete = () => res(true); });
+      } catch (e) { return false; }
+    }
+    async function loadDirHandle() {
+      try {
+        const db = await openHandleDB();
+        const tx = db.transaction("handles", "readonly");
+        return new Promise(res => {
+          const req = tx.objectStore("handles").get("exportDir");
+          req.onsuccess = () => res(req.result || null);
+          req.onerror = () => res(null);
+        });
+      } catch (e) { return null; }
+    }
+    async function clearDirHandle() {
+      try {
+        const db = await openHandleDB();
+        const tx = db.transaction("handles", "readwrite");
+        tx.objectStore("handles").delete("exportDir");
+      } catch (e) {}
+    }
+
+    function buildTimestampedFilename() {
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const ts = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`;
+      return `creditrack-backup-${ts}.txt`;
+    }
+
     async function exportData() {
       const data = {
         version: 1,
@@ -428,12 +527,50 @@
         borrowers: borrowers,
       };
       const json = JSON.stringify(data, null, 2);
-      const today = new Date().toISOString().slice(0, 10);
-      const filename = `creditrack-backup-${today}.txt`;
+
+      // Always save to in-app history
+      saveBackupSnapshot(json);
+
+      const filename = buildTimestampedFilename();
+
+      // Try File System Access API — pick folder once, remember it for next time
+      if ('showDirectoryPicker' in window) {
+        try {
+          let dirHandle = await loadDirHandle();
+
+          // Verify existing handle still has permission
+          if (dirHandle) {
+            const perm = await dirHandle.queryPermission({ mode: "readwrite" });
+            if (perm !== "granted") {
+              const newPerm = await dirHandle.requestPermission({ mode: "readwrite" });
+              if (newPerm !== "granted") dirHandle = null;
+            }
+          }
+
+          // No handle yet — ask user to pick a folder
+          if (!dirHandle) {
+            dirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+            await saveDirHandle(dirHandle);
+          }
+
+          // Write the file
+          const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
+          const writable = await fileHandle.createWritable();
+          await writable.write(json);
+          await writable.close();
+
+          alert(`Backup saved as:\n${filename}\n\nIn your chosen folder.`);
+          return;
+        } catch (err) {
+          if (err.name === "AbortError") return; // user cancelled
+          console.error("FS Access error:", err);
+          // Fall through to share/download fallback
+        }
+      }
+
+      // Fallback 1: Web Share API
       const blob = new Blob([json], { type: "text/plain" });
       const file = new File([blob], filename, { type: "text/plain" });
-
-      // Try Web Share API with file (mobile: opens share sheet for Drive, Gmail, WhatsApp, etc.)
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         try {
           await navigator.share({
@@ -447,20 +584,7 @@
         }
       }
 
-      // Try sharing as text only (works on more Android browsers)
-      if (navigator.share) {
-        try {
-          await navigator.share({
-            title: "CrediTrack Backup",
-            text: json,
-          });
-          return;
-        } catch (err) {
-          if (err.name === "AbortError") return;
-        }
-      }
-
-      // Fallback: regular download
+      // Fallback 2: Plain download
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -469,6 +593,11 @@
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+    }
+
+    async function changeExportFolder() {
+      await clearDirHandle();
+      alert("Backup folder cleared. You'll be asked to pick a new folder on your next Backup.");
     }
 
     function triggerImport() {
@@ -498,7 +627,17 @@
     }
 
     function deleteBorrower(id) {
-      borrowers = borrowers.filter(b => b.id !== id);
+      const b = borrowers.find(x => x.id === id);
+      if (!b) return;
+      const paid = b.weeks.filter(isWeekPaid).length;
+      const received = calcReceived(b);
+      const msg = `Are you sure you want to permanently delete "${b.name}"?\n\n${paid} week${paid === 1 ? '' : 's'} paid · ₹${received.toLocaleString("en-IN")} received\n\nThis action cannot be undone.`;
+      if (!confirm(msg)) {
+        confirmDeleteId = null;
+        render();
+        return;
+      }
+      borrowers = borrowers.filter(x => x.id !== id);
       saveData();
       confirmDeleteId = null;
       if (selectedId === id) { selectedId = null; currentView = "home"; }
@@ -525,6 +664,51 @@
     function goWeekly() { currentView = "weekly"; render(); }
     function goArchive() { currentView = "archive"; render(); }
     function goProfit() { currentView = "profit"; render(); }
+    function goBackups() { currentView = "backups"; render(); }
+
+    // ===== BACKUP HISTORY =====
+    function saveBackupSnapshot(json) {
+      try {
+        let history = JSON.parse(localStorage.getItem("creditrack-backups") || "[]");
+        history.unshift({
+          id: Date.now().toString(),
+          createdAt: new Date().toISOString(),
+          data: json,
+          count: borrowers.length,
+        });
+        // Keep last 5 only
+        history = history.slice(0, 5);
+        localStorage.setItem("creditrack-backups", JSON.stringify(history));
+      } catch (e) {}
+    }
+    function getBackupHistory() {
+      try {
+        return JSON.parse(localStorage.getItem("creditrack-backups") || "[]");
+      } catch (e) { return []; }
+    }
+    function restoreBackup(id) {
+      const history = getBackupHistory();
+      const snap = history.find(h => h.id === id);
+      if (!snap) return;
+      if (!confirm(`Restore backup from ${fmtDate(snap.createdAt)} with ${snap.count} borrower(s)? This will REPLACE your current data.`)) return;
+      try {
+        const parsed = JSON.parse(snap.data);
+        borrowers = parsed.borrowers || parsed;
+        saveData();
+        alert("Restored successfully!");
+        goHome();
+      } catch (err) {
+        alert("Restore failed: " + err.message);
+      }
+    }
+    function deleteBackup(id, event) {
+      if (event) event.stopPropagation();
+      if (!confirm("Delete this backup snapshot?")) return;
+      let history = getBackupHistory();
+      history = history.filter(h => h.id !== id);
+      try { localStorage.setItem("creditrack-backups", JSON.stringify(history)); } catch (e) {}
+      render();
+    }
     function toggleProfit() { showProfitBreakdown = !showProfitBreakdown; render(); }
 
     function askDelete(id) { confirmDeleteId = id; render(); }
@@ -533,7 +717,7 @@
     function updateCreditedDate(id, dateStr) {
       const b = borrowers.find(x => x.id === id);
       if (!b || !dateStr) return;
-      b.createdAt = new Date(dateStr + 'T00:00:00').toISOString();
+      b.createdAt = new Date(dateStr + 'T00:00:00.000Z').toISOString();
       saveData();
       render();
     }
@@ -558,7 +742,7 @@
       const current = b.weeks[weekIdx];
       // Only update if currently paid
       if (!isWeekPaid(current)) return;
-      b.weeks[weekIdx] = { paid: true, date: new Date(dateStr + 'T00:00:00').toISOString() };
+      b.weeks[weekIdx] = { paid: true, date: new Date(dateStr + 'T00:00:00.000Z').toISOString() };
       saveData();
       render();
     }
@@ -715,6 +899,7 @@
       if (currentView === "weekly") return renderWeekly(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
+      if (currentView === "backups") return renderBackups(app);
       renderHome(app);
     }
 
@@ -805,6 +990,17 @@
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Profits</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Earned and expected profit breakdown</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="goBackups()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div style="font-size:28px">💾</div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Backup History</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${getBackupHistory().length} saved snapshot${getBackupHistory().length === 1 ? '' : 's'} · Last 5 kept</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -1118,6 +1314,59 @@
       app.innerHTML = html;
     }
 
+    function renderBackups(app) {
+      const history = getBackupHistory();
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Backup History</h2>
+              <span style="font-size:13px;color:var(--text-dim)">${history.length} snapshot${history.length === 1 ? '' : 's'} · Last 5 kept</span>
+            </div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:16px">
+            <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
+              Every time you tap <strong style="color:var(--text)">💾 Backup</strong> on the home screen, a snapshot is automatically saved here. Your last 5 backups are kept in-app so you can quickly restore without needing a file.
+            </div>
+          </div>
+
+          <button onclick="changeExportFolder()" style="width:100%;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;margin-bottom:16px">📂 Change Backup Folder</button>`;
+
+      if (history.length === 0) {
+        html += `
+          <div style="text-align:center;padding:40px 20px">
+            <div style="font-size:48px;margin-bottom:16px">💾</div>
+            <div style="font-size:14px;color:var(--text-dim)">No backups yet</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Tap 💾 Backup on the home screen to create one</div>
+          </div>`;
+      } else {
+        html += `<div style="display:flex;flex-direction:column;gap:10px">`;
+        history.forEach(snap => {
+          const when = new Date(snap.createdAt);
+          const dateStr = when.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+          const timeStr = when.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+          html += `
+            <div class="card">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+                <div style="flex:1">
+                  <div style="font-size:14px;font-weight:600;color:var(--text)">${dateStr} · ${timeStr}</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${snap.count} borrower${snap.count === 1 ? '' : 's'}</div>
+                </div>
+                <button onclick="restoreBackup('${snap.id}')" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:8px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Restore</button>
+                <button onclick="deleteBackup('${snap.id}',event)" style="background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid rgba(239,68,68,0.2);border-radius:8px;padding:8px 10px;font-size:14px;cursor:pointer">🗑</button>
+              </div>
+            </div>`;
+        });
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+      app.innerHTML = html;
+    }
+
     function renderBorrowerList() {
       const filtered = getFilteredBorrowers();
       if (filtered.length === 0) {
@@ -1133,12 +1382,16 @@
         const balance = plan.total - received;
         const progress = (paid / plan.weeks) * 100;
         const isComplete = paid === plan.weeks;
+        const overdue = getOverdueStatus(b);
 
         html += `
-          <div class="card" onclick="goDetail('${b.id}')">
+          <div class="card" onclick="goDetail('${b.id}')" style="${overdue.overdue ? 'border:1px solid var(--danger)' : ''}">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
               <div>
-                <div style="font-size:16px;font-weight:600">${b.name}</div>
+                <div style="font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px">
+                  ${b.name}
+                  ${overdue.overdue ? `<span style="font-size:10px;background:rgba(239,68,68,0.15);color:var(--danger);padding:2px 8px;border-radius:20px;font-weight:700">OVERDUE ${overdue.daysLate}d</span>` : ''}
+                </div>
                 <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${paid}/${plan.weeks} weeks</div>
                 <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Credited on ${fmtDate(b.createdAt)}</div>
               </div>
@@ -1174,11 +1427,14 @@
         <div class="fade-in">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
             <h1 style="font-size:26px;font-weight:700;letter-spacing:-0.5px">CrediTrack</h1>
-            <button onclick="goMenu()" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:3px">
-              <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
-              <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
-              <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
-            </button>
+            <div style="display:flex;gap:8px">
+              <button onclick="toggleHideAmounts()" title="Hide/show amounts" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px">${hideAmounts ? '🙈' : '👁️'}</button>
+              <button onclick="goMenu()" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:3px">
+                <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
+                <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
+                <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
+              </button>
+            </div>
           </div>`;
 
       if (borrowers.length > 0) {
@@ -1212,8 +1468,8 @@
 
       html += `<button class="fab" onclick="goAdd()">+ Add Borrower</button>
         <div style="display:flex;gap:10px;margin-top:12px;margin-bottom:40px">
-          <button onclick="exportData()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">⬇ Export Backup</button>
-          <button onclick="triggerImport()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">⬆ Import Backup</button>
+          <button onclick="exportData()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">💾 Backup</button>
+          <button onclick="triggerImport()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">♻️ Restore</button>
           <input id="importFileInput" type="file" accept="application/json,.json,text/plain,.txt" onchange="importData(event)" style="display:none" />
         </div>
         </div>`;
@@ -1250,8 +1506,17 @@
               <div style="font-size:13px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${fmt(plan.principal)} loan</div>
               <div style="font-size:11px;color:var(--text-dim);margin-top:4px;display:flex;align-items:center;gap:8px">
                 <span>Credited on</span>
-                <input type="date" value="${b.createdAt.slice(0,10)}" onchange="updateCreditedDate('${b.id}',this.value)" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:11px;padding:3px 6px;font-family:'DM Sans',sans-serif;outline:none" />
+                <input type="date" value="${toUtcDateStr(b.createdAt)}" onchange="updateCreditedDate('${b.id}',this.value)" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:11px;padding:3px 6px;font-family:'DM Sans',sans-serif;outline:none" />
               </div>
+              ${(() => {
+                // Expected completion: anchor on Week 1 payment date if available, else credited date
+                const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
+                const anchor = new Date(anchorIso);
+                const expectedEnd = new Date(anchor);
+                expectedEnd.setUTCDate(anchor.getUTCDate() + plan.weeks * 7);
+                const label = isComplete ? "Completed" : "Expected completion";
+                return `<div style="font-size:11px;color:var(--text-dim);margin-top:4px">${label}: <span style="color:var(--accent)">${fmtDate(expectedEnd.toISOString())}</span></div>`;
+              })()}
             </div>
           </div>
 
@@ -1292,7 +1557,7 @@
                 ${checked && paidDate
                   ? `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
                        <span>Paid on</span>
-                       <input type="date" value="${paidDate.slice(0,10)}" onchange="updateWeekDate('${b.id}',${i},this.value)" onclick="event.stopPropagation()" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:11px;padding:2px 5px;font-family:'DM Sans',sans-serif;outline:none" />
+                       <input type="date" value="${toUtcDateStr(paidDate)}" onchange="updateWeekDate('${b.id}',${i},this.value)" onclick="event.stopPropagation()" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:11px;padding:2px 5px;font-family:'DM Sans',sans-serif;outline:none" />
                      </div>`
                   : ''}
               </div>
