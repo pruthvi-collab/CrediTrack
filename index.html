@@ -190,13 +190,29 @@
 
     // Get the plan object for a borrower — either a standard PLANS entry or their custom plan
     function getPlan(b) {
+      if (!b) return PLANS[5000];
       if (b.customPlan) return b.customPlan;
-      return PLANS[b.plan];
+      const p = PLANS[b.plan];
+      if (p) return p;
+      // Fallback: reconstruct a minimal plan from the borrower's weeks array
+      // This prevents crashes from corrupted or imported data
+      const weeksCount = b.weeks ? b.weeks.length : 15;
+      const guess = Number(b.plan) || 5000;
+      return {
+        principal: 0,
+        weekly: guess,
+        weeks: weeksCount,
+        total: guess * weeksCount,
+        profit: 0,
+        weeklyAmounts: null,
+        isFallback: true,
+      };
     }
 
     // Get amount for a specific week of a borrower (uses custom plan if set)
     function getBorrowerWeekAmount(b, weekIdx) {
       const p = getPlan(b);
+      if (!p) return 0;
       if (p.weeklyAmounts) return p.weeklyAmounts[weekIdx] || p.weekly;
       return p.weekly;
     }
@@ -255,6 +271,7 @@
     let customPrincipal = "";
     let customWeekly = "";
     let customWeeks = "";
+    let customFinalWeekly = "";
     let hideAmounts = false;
 
     // ===== STORAGE =====
@@ -410,20 +427,35 @@
         const pEl = document.getElementById("customPrincipalInput");
         const wEl = document.getElementById("customWeeklyInput");
         const nEl = document.getElementById("customWeeksInput");
+        const fEl = document.getElementById("customFinalWeeklyInput");
         const principal = Number(pEl?.value);
         const weekly = Number(wEl?.value);
         const weeks = Number(nEl?.value);
+        const finalWeekly = fEl?.value ? Number(fEl.value) : 0;
         if (!principal || principal <= 0) { alert("Enter a valid principal amount"); return; }
         if (!weekly || weekly <= 0) { alert("Enter a valid weekly amount"); return; }
         if (!weeks || weeks <= 0 || weeks > 52) { alert("Enter a valid number of weeks (1-52)"); return; }
-        const total = weekly * weeks;
+        if (fEl?.value && (finalWeekly <= 0)) { alert("Enter a valid final week amount"); return; }
+
+        // Build weeklyAmounts array if final week differs
+        let weeklyAmounts = null;
+        let total;
+        if (finalWeekly > 0 && finalWeekly !== weekly) {
+          weeklyAmounts = [];
+          for (let i = 0; i < weeks - 1; i++) weeklyAmounts.push(weekly);
+          weeklyAmounts.push(finalWeekly);
+          total = weekly * (weeks - 1) + finalWeekly;
+        } else {
+          total = weekly * weeks;
+        }
+
         customPlan = {
           principal,
           weekly,
           weeks,
           total,
           profit: total - principal,
-          weeklyAmounts: null,
+          weeklyAmounts,
           isCustom: true,
         };
         planKey = "custom";
@@ -447,6 +479,7 @@
       customPrincipal = "";
       customWeekly = "";
       customWeeks = "";
+      customFinalWeekly = "";
       currentView = "home";
       render();
     }
@@ -646,7 +679,7 @@
 
     function goDetail(id) { selectedId = id; currentView = "detail"; confirmDeleteId = null; showProfitBreakdown = false; render(); }
     function goHome() { selectedId = null; currentView = "home"; confirmDeleteId = null; showProfitBreakdown = false; render(); }
-    function goAdd() { currentView = "add"; newPlan = 5000; customPrincipal = ""; customWeekly = ""; customWeeks = ""; showProfitBreakdown = false; render(); setTimeout(() => document.getElementById("nameInput")?.focus(), 100); }
+    function goAdd() { currentView = "add"; newPlan = 5000; customPrincipal = ""; customWeekly = ""; customWeeks = ""; customFinalWeekly = ""; showProfitBreakdown = false; render(); setTimeout(() => document.getElementById("nameInput")?.focus(), 100); }
     function goMenu() { currentView = "menu"; render(); }
 
     function selectPlan(p) {
@@ -658,6 +691,7 @@
       if (field === "principal") customPrincipal = value;
       else if (field === "weekly") customWeekly = value;
       else if (field === "weeks") customWeeks = value;
+      else if (field === "finalWeekly") customFinalWeekly = value;
       // Don't re-render (keeps input focus)
     }
     function goSummary() { currentView = "summary"; render(); }
@@ -1645,6 +1679,11 @@
                           <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Weeks</label>
                           <input id="customWeeksInput" type="number" inputmode="numeric" placeholder="e.g., 12" value="${customWeeks}" oninput="updateCustomField('weeks',this.value)" class="input-field" style="padding:10px 12px;font-size:14px" />
                         </div>
+                      </div>
+                      <div>
+                        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Final week amount <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+                        <input id="customFinalWeeklyInput" type="number" inputmode="numeric" placeholder="Leave empty if same as weekly" value="${customFinalWeekly}" oninput="updateCustomField('finalWeekly',this.value)" class="input-field" style="padding:10px 12px;font-size:14px" />
+                        <div style="font-size:10px;color:var(--text-dim);margin-top:4px">Use this if the last week is a different amount (e.g., all weeks ₹3,500 but final week ₹4,500)</div>
                       </div>
                     </div>`
                   : `<div style="font-size:13px;color:var(--text-dim)">One-off plan with custom principal, weekly amount, and weeks</div>`
