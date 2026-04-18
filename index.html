@@ -365,6 +365,21 @@
           }
           return;
         }
+        if (pinStage === "unblur") {
+          if (pinInput === getPIN()) {
+            hideAmounts = false;
+            document.documentElement.setAttribute("data-hide-amounts", "0");
+            pinInput = "";
+            pinStage = "enter";
+            currentView = "home";
+            render();
+          } else {
+            pinError = "Wrong PIN, try again";
+            pinInput = "";
+            render();
+          }
+          return;
+        }
       }
       render();
     }
@@ -395,8 +410,25 @@
       return `<span class="amt">${formatted}</span>`;
     }
     function toggleHideAmounts() {
-      hideAmounts = !hideAmounts;
-      document.documentElement.setAttribute("data-hide-amounts", hideAmounts ? "1" : "0");
+      // Hiding: always allowed with one tap
+      if (!hideAmounts) {
+        hideAmounts = true;
+        document.documentElement.setAttribute("data-hide-amounts", "1");
+        render();
+        return;
+      }
+      // Unhiding: if a PIN is set, require PIN entry
+      if (hasPIN()) {
+        currentView = "pin-unblur";
+        pinInput = "";
+        pinError = "";
+        pinStage = "unblur";
+        render();
+        return;
+      }
+      // No PIN set → just toggle off
+      hideAmounts = false;
+      document.documentElement.setAttribute("data-hide-amounts", "0");
       render();
     }
     function fmtDate(iso) {
@@ -994,6 +1026,7 @@
       const app = document.getElementById("app");
       if (appLocked) return renderLockScreen(app);
       if (currentView === "pin-setup") return renderPinSetup(app);
+      if (currentView === "pin-unblur") return renderPinUnblur(app);
       if (currentView === "detail") return renderDetail(app);
       if (currentView === "add") return renderAdd(app);
       if (currentView === "menu") return renderMenu(app);
@@ -1041,6 +1074,25 @@
             <h2 style="font-size:20px;font-weight:700;color:var(--text)">PIN Setup</h2>
           </div>
           ${renderPinKeypad(title, subtitle)}
+        </div>`;
+    }
+
+    function cancelUnblur() {
+      pinInput = "";
+      pinError = "";
+      pinStage = "enter";
+      currentView = "home";
+      render();
+    }
+
+    function renderPinUnblur(app) {
+      app.innerHTML = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <button class="back-btn" onclick="cancelUnblur()">←</button>
+            <h2 style="font-size:20px;font-weight:700;color:var(--text)">Reveal Amounts</h2>
+          </div>
+          ${renderPinKeypad("Enter PIN", "Unlock to reveal ₹ amounts")}
         </div>`;
     }
 
