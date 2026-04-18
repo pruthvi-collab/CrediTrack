@@ -696,6 +696,7 @@
     }
     function goSummary() { currentView = "summary"; render(); }
     function goWeekly() { currentView = "weekly"; render(); }
+    function goYearly() { currentView = "yearly"; render(); }
     function goArchive() { currentView = "archive"; render(); }
     function goProfit() { currentView = "profit"; render(); }
     function goBackups() { currentView = "backups"; render(); }
@@ -873,6 +874,73 @@
       return { received, expected, paidBorrowers, monthName: now.toLocaleDateString("en-IN", { month: "long", year: "numeric" }) };
     }
 
+    function getYearlySummary() {
+      const now = new Date();
+      const year = now.getFullYear();
+      let totalLent = 0;
+      let totalReceived = 0;
+      let totalExpected = 0;
+      let earnedProfit = 0;
+      let newBorrowerCount = 0;
+      let completedCount = 0;
+      const monthlyBreakdown = Array(12).fill(0); // received per month
+
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const credited = new Date(b.createdAt);
+
+        // Count borrowers credited this year
+        if (credited.getFullYear() === year) {
+          totalLent += plan.principal;
+          newBorrowerCount += 1;
+        }
+
+        // Received payments this year
+        b.weeks.forEach((w, i) => {
+          if (isWeekPaid(w)) {
+            const d = new Date(getWeekDate(w));
+            if (d.getFullYear() === year) {
+              const amt = getBorrowerWeekAmount(b, i);
+              totalReceived += amt;
+              monthlyBreakdown[d.getMonth()] += amt;
+            }
+          }
+        });
+
+        // Expected this year based on schedule
+        for (let i = 0; i < plan.weeks; i++) {
+          const dueDate = new Date(credited);
+          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          if (dueDate.getFullYear() === year) {
+            totalExpected += getBorrowerWeekAmount(b, i);
+          }
+        }
+
+        // Profit from loans completed this year
+        const allPaid = b.weeks.every(isWeekPaid);
+        if (allPaid) {
+          // Use last week's payment date to determine completion year
+          const lastWeek = b.weeks[b.weeks.length - 1];
+          const lastDate = new Date(getWeekDate(lastWeek));
+          if (lastDate.getFullYear() === year) {
+            earnedProfit += plan.profit;
+            completedCount += 1;
+          }
+        }
+      });
+
+      return {
+        year,
+        totalLent,
+        totalReceived,
+        totalExpected,
+        earnedProfit,
+        newBorrowerCount,
+        completedCount,
+        monthlyBreakdown,
+      };
+    }
+
     function getWeeklySummary() {
       // Week is Sunday-Saturday
       const now = new Date();
@@ -931,6 +999,7 @@
       if (currentView === "menu") return renderMenu(app);
       if (currentView === "summary") return renderSummary(app);
       if (currentView === "weekly") return renderWeekly(app);
+      if (currentView === "yearly") return renderYearly(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
       if (currentView === "backups") return renderBackups(app);
@@ -1002,6 +1071,17 @@
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Monthly Summary</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Received this month vs expected</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="goYearly()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div style="font-size:28px">📈</div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Yearly Summary</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Full year overview with monthly breakdown</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -1194,6 +1274,66 @@
       }
 
       html += `</div>`;
+      app.innerHTML = html;
+    }
+
+    function renderYearly(app) {
+      const s = getYearlySummary();
+      const pct = s.totalExpected > 0 ? Math.round((s.totalReceived / s.totalExpected) * 100) : 0;
+      const monthNames = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+      const maxMonthly = Math.max(1, ...s.monthlyBreakdown);
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Yearly Summary</h2>
+              <span style="font-size:13px;color:var(--text-dim)">${s.year}</span>
+            </div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:14px;padding:20px;margin-bottom:16px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Received in ${s.year}</div>
+            <div class="mono" style="font-size:32px;font-weight:700;color:var(--success)">${fmt(s.totalReceived)}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">of ${fmt(s.totalExpected)} expected</div>
+            <div class="progress-bar" style="height:8px;margin-top:12px"><div class="progress-fill" style="width:${Math.min(pct,100)}%;height:8px"></div></div>
+            <div style="font-size:11px;color:var(--accent);margin-top:6px;font-family:'JetBrains Mono',monospace">${pct}% collected</div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div class="stat-card"><div class="stat-label">Lent</div><div class="stat-value" style="color:var(--text)">${fmt(s.totalLent)}</div></div>
+            <div class="stat-card"><div class="stat-label">Profit Earned</div><div class="stat-value" style="color:var(--accent)">${fmt(s.earnedProfit)}</div></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
+            <div class="stat-card"><div class="stat-label">New Borrowers</div><div class="stat-value" style="color:var(--text)">${s.newBorrowerCount}</div></div>
+            <div class="stat-card"><div class="stat-label">Completed</div><div class="stat-value" style="color:var(--success)">${s.completedCount}</div></div>
+          </div>
+
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px">Monthly Breakdown</div>
+            <div style="display:flex;flex-direction:column;gap:8px">`;
+
+      for (let i = 0; i < 12; i++) {
+        const amt = s.monthlyBreakdown[i];
+        const barPct = (amt / maxMonthly) * 100;
+        html += `
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:11px;color:var(--text-dim);width:32px;font-weight:600">${monthNames[i]}</div>
+                <div style="flex:1;background:var(--bg);border-radius:100px;height:8px;overflow:hidden">
+                  <div style="background:linear-gradient(90deg,var(--accent),var(--accent-dim));width:${barPct}%;height:100%;border-radius:100px;transition:width 0.4s ease"></div>
+                </div>
+                <div class="mono" style="font-size:11px;color:${amt > 0 ? 'var(--success)' : 'var(--text-dim)'};font-weight:500;min-width:80px;text-align:right">${fmt(amt)}</div>
+              </div>`;
+      }
+
+      html += `
+            </div>
+          </div>
+
+          ${borrowers.length === 0 ? `<div style="text-align:center;padding:40px 20px"><div style="font-size:14px;color:var(--text-dim)">No data yet</div></div>` : ''}
+        </div>`;
+
       app.innerHTML = html;
     }
 
