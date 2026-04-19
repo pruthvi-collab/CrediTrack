@@ -263,6 +263,8 @@
     let filterBy = "all";  // all, active, completed
     let searchQuery = "";
     let appLocked = false;
+    let idleTimer = null;
+    const IDLE_LOCK_MS = 10 * 60 * 1000; // 10 minutes
     let pinInput = "";
     let pinStage = "enter"; // enter, set-new, confirm-new
     let pinTempNew = "";
@@ -311,6 +313,24 @@
     // ===== PIN =====
     function hasPIN() {
       try { return !!localStorage.getItem("creditrack-pin"); } catch (e) { return false; }
+    }
+
+    // ===== IDLE AUTO-LOCK =====
+    function resetIdleTimer() {
+      if (idleTimer) clearTimeout(idleTimer);
+      // Only arm the timer if a PIN is set and the app is currently unlocked
+      if (!hasPIN() || appLocked) return;
+      idleTimer = setTimeout(() => {
+        appLocked = true;
+        pinInput = "";
+        pinError = "";
+        pinStage = "enter";
+        currentView = "home";
+        render();
+      }, IDLE_LOCK_MS);
+    }
+    function clearIdleTimer() {
+      if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
     }
     function getPIN() {
       try { return localStorage.getItem("creditrack-pin") || ""; } catch (e) { return ""; }
@@ -974,11 +994,14 @@
     }
 
     function getWeeklySummary() {
-      // Week is Sunday-Saturday
+      // Week is Monday-Sunday
       const now = new Date();
-      const dayOfWeek = now.getDay(); // 0 = Sunday
+      const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ... 6 = Saturday
+      // Calculate how many days to go back to reach Monday
+      // If today is Sunday (0), go back 6 days. Otherwise go back (dayOfWeek - 1) days.
+      const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
       const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - dayOfWeek);
+      weekStart.setDate(now.getDate() - daysToMonday);
       weekStart.setHours(0, 0, 0, 0);
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 7);
@@ -1894,6 +1917,16 @@
     // ===== INIT =====
     loadData();
     render();
+
+    // Auto-lock after inactivity
+    ["click","touchstart","keydown","mousemove","scroll"].forEach(ev => {
+      document.addEventListener(ev, resetIdleTimer, { passive: true });
+    });
+    // Also lock when the tab is hidden for a while — arm on visibilitychange
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) { clearIdleTimer(); } else { resetIdleTimer(); }
+    });
+    resetIdleTimer();
   </script>
 </body>
 </html>
