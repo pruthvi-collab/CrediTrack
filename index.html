@@ -159,17 +159,36 @@
 
     .hidden { display: none; }
 
-    /* Blur all amounts when hide-amounts mode is on */
+    /* Unified menu icon style */
+    .menu-icon {
+      width: 40px; height: 40px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
+    }
+
+    /* When hide-amounts is on, swap the real amount for a clean dots pattern */
     :root[data-hide-amounts="1"] .amt {
-      filter: blur(6px);
-      transition: filter 0.2s;
+      position: relative;
+      color: transparent !important;
       user-select: none;
     }
-    .amt { transition: filter 0.2s; }
+    :root[data-hide-amounts="1"] .amt::after {
+      content: "••••";
+      position: absolute;
+      left: 0;
+      top: 0;
+      right: 0;
+      text-align: inherit;
+      letter-spacing: 2px;
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .amt { transition: color 0.15s; }
   </style>
 </head>
 <body>
   <div class="container" id="app"></div>
+  <input id="importFileInput" type="file" accept="application/json,.json,text/plain,.txt" style="display:none" />
 
   <script>
     // ===== DATA & STATE =====
@@ -224,6 +243,23 @@
 
     // Check if a borrower is overdue based on their Week 1 payment date
     // Returns: { overdue: bool, daysLate: number, nextWeekNum: number }
+    // Get days since last payment (most recent ticked week's date)
+    // Returns null if no payments yet
+    function getDaysSinceLastPayment(b) {
+      let latestMs = 0;
+      b.weeks.forEach(w => {
+        if (isWeekPaid(w)) {
+          const d = new Date(getWeekDate(w)).getTime();
+          if (d > latestMs) latestMs = d;
+        }
+      });
+      if (latestMs === 0) return null;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diff = today.getTime() - latestMs;
+      return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+    }
+
     function getOverdueStatus(b) {
       const firstWeek = b.weeks[0];
       // Need Week 1 to be paid to start the clock
@@ -750,6 +786,8 @@
     function goWeekly() { currentView = "weekly"; render(); }
     function goYearly() { currentView = "yearly"; render(); }
     function goRates() { currentView = "rates"; render(); }
+    function goDayStats() { currentView = "daystats"; render(); }
+    function goCalendar() { currentView = "calendar"; render(); }
 
     // Calculate monthly ROI % for a plan
     function getMonthlyROI(plan) {
@@ -1066,6 +1104,8 @@
       if (currentView === "weekly") return renderWeekly(app);
       if (currentView === "yearly") return renderYearly(app);
       if (currentView === "rates") return renderRates(app);
+      if (currentView === "daystats") return renderDayStats(app);
+      if (currentView === "calendar") return renderCalendar(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
       if (currentView === "backups") return renderBackups(app);
@@ -1141,7 +1181,9 @@
           <div style="display:flex;flex-direction:column;gap:12px">
             <div class="card" onclick="goWeekly()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">📅</div>
+                <div class="menu-icon" style="background:rgba(34,211,167,0.15);color:#22d3a7">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">This Week's Collection</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Expected vs received this week</div>
@@ -1152,7 +1194,9 @@
 
             <div class="card" onclick="goSummary()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">📊</div>
+                <div class="menu-icon" style="background:rgba(59,130,246,0.15);color:#3b82f6">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Monthly Summary</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Received this month vs expected</div>
@@ -1163,7 +1207,9 @@
 
             <div class="card" onclick="goYearly()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">📈</div>
+                <div class="menu-icon" style="background:rgba(139,92,246,0.15);color:#8b5cf6">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Yearly Summary</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Full year overview with monthly breakdown</div>
@@ -1174,7 +1220,9 @@
 
             <div class="card" onclick="goArchive()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">📁</div>
+                <div class="menu-icon" style="background:rgba(148,163,184,0.15);color:#94a3b8">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Completed Archive</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${completedCount} completed ${completedCount === 1 ? 'loan' : 'loans'}</div>
@@ -1185,7 +1233,9 @@
 
             <div class="card" onclick="goProfit()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">💰</div>
+                <div class="menu-icon" style="background:rgba(167,139,250,0.15);color:#a78bfa">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Profits</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Earned and expected profit breakdown</div>
@@ -1196,7 +1246,9 @@
 
             <div class="card" onclick="goRates()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">📈</div>
+                <div class="menu-icon" style="background:rgba(6,182,212,0.15);color:#06b6d4">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Rate of Return</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Monthly ROI % per plan and borrower</div>
@@ -1205,12 +1257,64 @@
               </div>
             </div>
 
+            <div class="card" onclick="goCalendar()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(245,158,11,0.15);color:#f59e0b">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="16" y1="14" x2="16" y2="14"/><line x1="8" y1="18" x2="8" y2="18"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Collection Calendar</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Month view of expected payments</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="goDayStats()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(236,72,153,0.15);color:#ec4899">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12c.552 0 1.005-.449.95-.998a10 10 0 1 0-10.949 10.949c.55.055.999-.398.999-.95v0"/><path d="M16 16l2 2 4-4"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Collection Days</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Which weekdays you get paid most</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="exportData()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(16,185,129,0.15);color:#10b981">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Backup Now</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Save to folder with timestamp</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card" onclick="triggerImport()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(249,115,22,0.15);color:#f97316">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Restore from File</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Load a previous backup file</div>
+                </div>
+              </div>
+            </div>
+
             <div class="card" onclick="goBackups()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">💾</div>
+                <div class="menu-icon" style="background:rgba(100,116,139,0.15);color:#64748b">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Backup History</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${getBackupHistory().length} saved snapshot${getBackupHistory().length === 1 ? '' : 's'} · Last 5 kept</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${getBackupHistory().length} saved · Last 5 kept</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -1218,7 +1322,12 @@
 
             <div class="card" onclick="toggleTheme()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">${theme === 'dark' ? '🌙' : '☀️'}</div>
+                <div class="menu-icon" style="background:rgba(234,179,8,0.15);color:#eab308">
+                  ${theme === 'dark'
+                    ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>`
+                    : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>`
+                  }
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Theme</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Currently ${theme === 'dark' ? 'Dark' : 'Light'} mode · Tap to switch</div>
@@ -1228,7 +1337,12 @@
 
             <div class="card" onclick="${hasPIN() ? 'confirmRemovePIN()' : 'startSetPIN()'}">
               <div style="display:flex;align-items:center;gap:14px">
-                <div style="font-size:28px">${hasPIN() ? '🔓' : '🔒'}</div>
+                <div class="menu-icon" style="background:rgba(239,68,68,0.15);color:#ef4444">
+                  ${hasPIN()
+                    ? `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>`
+                    : `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>`
+                  }
+                </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">PIN Lock</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${hasPIN() ? 'PIN is set · Tap to remove' : 'Not set · Tap to protect app with 4-digit PIN'}</div>
@@ -1735,6 +1849,253 @@
       app.innerHTML = html;
     }
 
+    function renderDayStats(app) {
+      // Count payments received per day of week (Mon-Sun)
+      const dayNames = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+      const counts = Array(7).fill(0);   // number of payments on each day
+      const amounts = Array(7).fill(0);  // total received on each day
+
+      borrowers.forEach(b => {
+        b.weeks.forEach((w, i) => {
+          if (isWeekPaid(w)) {
+            const d = new Date(getWeekDate(w));
+            // JS: 0=Sun, 1=Mon ... 6=Sat. Convert to Mon-first: 0=Mon ... 6=Sun
+            const jsDay = d.getDay();
+            const monFirst = jsDay === 0 ? 6 : jsDay - 1;
+            counts[monFirst] += 1;
+            amounts[monFirst] += getBorrowerWeekAmount(b, i);
+          }
+        });
+      });
+
+      const totalCount = counts.reduce((s, c) => s + c, 0);
+      const maxCount = Math.max(1, ...counts);
+      const topDayIdx = counts.indexOf(Math.max(...counts));
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Collection Days</h2>
+              <span style="font-size:13px;color:var(--text-dim)">Your payment pattern by weekday</span>
+            </div>
+          </div>`;
+
+      if (totalCount === 0) {
+        html += `
+          <div style="text-align:center;padding:40px 20px">
+            <div style="font-size:48px;margin-bottom:16px">📆</div>
+            <div style="font-size:14px;color:var(--text-dim)">No payments logged yet</div>
+          </div>`;
+      } else {
+        html += `
+          <div style="background:var(--card-alt);border-radius:14px;padding:20px;margin-bottom:16px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Most common day</div>
+            <div style="font-size:28px;font-weight:700;color:var(--accent)">${dayNames[topDayIdx]}day</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${counts[topDayIdx]} of ${totalCount} payments (${Math.round(counts[topDayIdx]/totalCount*100)}%)</div>
+          </div>
+
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:14px">Payments by Day</div>
+            <div style="display:flex;flex-direction:column;gap:10px">`;
+
+        for (let i = 0; i < 7; i++) {
+          const barPct = (counts[i] / maxCount) * 100;
+          const isTop = i === topDayIdx && counts[i] > 0;
+          html += `
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:12px;color:var(--text-dim);width:36px;font-weight:600">${dayNames[i]}</div>
+                <div style="flex:1;background:var(--bg);border-radius:100px;height:10px;overflow:hidden">
+                  <div style="background:linear-gradient(90deg,var(--accent),var(--accent-dim));width:${barPct}%;height:100%;border-radius:100px;transition:width 0.4s ease"></div>
+                </div>
+                <div style="font-size:11px;color:${isTop ? 'var(--accent)' : 'var(--text-dim)'};font-weight:600;min-width:80px;text-align:right">${counts[i]} · ${fmt(amounts[i])}</div>
+              </div>`;
+        }
+
+        html += `
+            </div>
+          </div>`;
+      }
+
+      html += `</div>`;
+      app.innerHTML = html;
+    }
+
+    // Calendar state — current month being viewed
+    let calendarMonthOffset = 0;
+
+    function calendarNav(delta) {
+      calendarMonthOffset += delta;
+      render();
+    }
+
+    function renderCalendar(app) {
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const viewDate = new Date(today.getFullYear(), today.getMonth() + calendarMonthOffset, 1);
+      const year = viewDate.getFullYear();
+      const month = viewDate.getMonth();
+      const monthName = viewDate.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+
+      // Build map of expected payments by YYYY-MM-DD within this month
+      const firstOfMonth = new Date(year, month, 1);
+      const lastOfMonth = new Date(year, month + 1, 0);
+      const paymentsByDay = {}; // key: day (1-31), value: [{name, amount, isPaid}]
+
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const credited = new Date(b.createdAt);
+        for (let i = 0; i < plan.weeks; i++) {
+          const dueDate = new Date(credited);
+          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          if (dueDate.getFullYear() === year && dueDate.getMonth() === month) {
+            const day = dueDate.getDate();
+            if (!paymentsByDay[day]) paymentsByDay[day] = [];
+            paymentsByDay[day].push({
+              name: b.name,
+              amount: getBorrowerWeekAmount(b, i),
+              isPaid: isWeekPaid(b.weeks[i]),
+              weekNum: i + 1,
+            });
+          }
+        }
+      });
+
+      // Calculate month totals
+      let monthExpected = 0;
+      let monthPaid = 0;
+      Object.values(paymentsByDay).forEach(list => {
+        list.forEach(p => {
+          monthExpected += p.amount;
+          if (p.isPaid) monthPaid += p.amount;
+        });
+      });
+
+      // Grid: Mon-first weekdays
+      const firstDayJs = firstOfMonth.getDay(); // 0=Sun
+      const firstDayMonFirst = firstDayJs === 0 ? 6 : firstDayJs - 1; // 0=Mon
+      const daysInMonth = lastOfMonth.getDate();
+      const todayDay = (today.getFullYear() === year && today.getMonth() === month) ? today.getDate() : -1;
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Collection Calendar</h2>
+              <span style="font-size:13px;color:var(--text-dim)">Expected payments by date</span>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            <button onclick="calendarNav(-1)" style="background:var(--card-alt);border:none;color:var(--text);width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:16px">‹</button>
+            <div style="font-size:16px;font-weight:600;color:var(--text)">${monthName}</div>
+            <button onclick="calendarNav(1)" style="background:var(--card-alt);border:none;color:var(--text);width:36px;height:36px;border-radius:10px;cursor:pointer;font-size:16px">›</button>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+            <div class="stat-card"><div class="stat-label">Expected</div><div class="stat-value" style="color:var(--text)">${fmt(monthExpected)}</div></div>
+            <div class="stat-card"><div class="stat-label">Received</div><div class="stat-value" style="color:var(--success)">${fmt(monthPaid)}</div></div>
+          </div>
+
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:12px;margin-bottom:16px">
+            <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px">
+              ${["M","T","W","T","F","S","S"].map(d => `<div style="text-align:center;font-size:10px;color:var(--text-dim);font-weight:700;padding:4px 0">${d}</div>`).join("")}
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">`;
+
+      // Empty cells before month starts
+      for (let i = 0; i < firstDayMonFirst; i++) {
+        html += `<div></div>`;
+      }
+
+      for (let day = 1; day <= daysInMonth; day++) {
+        const list = paymentsByDay[day] || [];
+        const hasPayments = list.length > 0;
+        const allPaid = hasPayments && list.every(p => p.isPaid);
+        const anyPaid = hasPayments && list.some(p => p.isPaid);
+        const totalAmt = list.reduce((s, p) => s + p.amount, 0);
+        const isToday = day === todayDay;
+
+        let bg = "transparent";
+        let color = "var(--text-dim)";
+        let badge = "";
+        if (hasPayments) {
+          if (allPaid) { bg = "rgba(16,185,129,0.15)"; color = "var(--success)"; }
+          else if (anyPaid) { bg = "rgba(245,158,11,0.15)"; color = "var(--warn)"; }
+          else { bg = "rgba(34,211,167,0.1)"; color = "var(--accent)"; }
+          badge = `<div style="font-size:8px;font-weight:700;margin-top:2px">${list.length}</div>`;
+        }
+
+        html += `
+              <div onclick="${hasPayments ? `calendarDayInfo('${year}-${month+1}-${day}')` : ''}" style="aspect-ratio:1;background:${bg};border-radius:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:${hasPayments ? 'pointer' : 'default'};${isToday ? 'border:2px solid var(--accent);' : ''}padding:4px">
+                <div style="font-size:13px;font-weight:${isToday ? 700 : 500};color:${color}">${day}</div>
+                ${badge}
+              </div>`;
+      }
+
+      html += `
+            </div>
+          </div>`;
+
+      // List of upcoming payments this month (not yet paid, on or after today)
+      const upcoming = [];
+      Object.entries(paymentsByDay).forEach(([day, list]) => {
+        list.forEach(p => {
+          if (!p.isPaid) {
+            const dayNum = parseInt(day);
+            upcoming.push({ ...p, day: dayNum });
+          }
+        });
+      });
+      upcoming.sort((a, b) => a.day - b.day);
+
+      if (upcoming.length > 0) {
+        html += `
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden">
+            <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
+              <span style="font-size:14px;font-weight:600;color:var(--text)">Upcoming (${upcoming.length})</span>
+            </div>`;
+        upcoming.forEach((p, i) => {
+          const dateStr = new Date(year, month, p.day).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+          const isPast = new Date(year, month, p.day) < today;
+          const borderBot = i < upcoming.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+          html += `
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot}">
+              <div>
+                <div style="font-size:14px;font-weight:500;color:var(--text)">${p.name}</div>
+                <div style="font-size:11px;color:${isPast ? 'var(--danger)' : 'var(--text-dim)'}">Week ${p.weekNum} · ${dateStr}${isPast ? ' (past)' : ''}</div>
+              </div>
+              <div class="mono" style="font-size:14px;font-weight:700;color:${isPast ? 'var(--danger)' : 'var(--warn)'}">${fmt(p.amount)}</div>
+            </div>`;
+        });
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+      app.innerHTML = html;
+    }
+
+    function calendarDayInfo(key) {
+      const [y, m, d] = key.split("-").map(Number);
+      const lines = [`Payments on ${d} ${new Date(y, m-1, d).toLocaleDateString("en-IN", { month: "short", year: "numeric" })}:\n`];
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const credited = new Date(b.createdAt);
+        for (let i = 0; i < plan.weeks; i++) {
+          const dueDate = new Date(credited);
+          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          if (dueDate.getFullYear() === y && dueDate.getMonth() === m-1 && dueDate.getDate() === d) {
+            const paid = isWeekPaid(b.weeks[i]);
+            const amt = getBorrowerWeekAmount(b, i);
+            lines.push(`${paid ? "✓" : "○"} ${b.name} · Week ${i+1} · ₹${amt.toLocaleString("en-IN")}`);
+          }
+        }
+      });
+      alert(lines.join("\n"));
+    }
+
     function renderBorrowerList() {
       const filtered = getFilteredBorrowers();
       if (filtered.length === 0) {
@@ -1751,14 +2112,18 @@
         const progress = (paid / plan.weeks) * 100;
         const isComplete = paid === plan.weeks;
         const overdue = getOverdueStatus(b);
+        const daysSince = getDaysSinceLastPayment(b);
+        // Show "X days since" only if not overdue, not complete, and 5+ days since last payment
+        const showNearingDue = !overdue.overdue && !isComplete && daysSince !== null && daysSince >= 5;
 
         html += `
           <div class="card" onclick="goDetail('${b.id}')" style="${overdue.overdue ? 'border:1px solid var(--danger)' : ''}">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
               <div>
-                <div style="font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px">
+                <div style="font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                   ${b.name}
                   ${overdue.overdue ? `<span style="font-size:10px;background:rgba(239,68,68,0.15);color:var(--danger);padding:2px 8px;border-radius:20px;font-weight:700">OVERDUE ${overdue.daysLate}d</span>` : ''}
+                  ${showNearingDue ? `<span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 8px;border-radius:20px;font-weight:600">${daysSince}d since last</span>` : ''}
                 </div>
                 <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${paid}/${plan.weeks} weeks</div>
                 <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Credited on ${fmtDate(b.createdAt)}</div>
@@ -1835,11 +2200,6 @@
       }
 
       html += `<button class="fab" onclick="goAdd()">+ Add Borrower</button>
-        <div style="display:flex;gap:10px;margin-top:12px;margin-bottom:40px">
-          <button onclick="exportData()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">💾 Backup</button>
-          <button onclick="triggerImport()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">♻️ Restore</button>
-          <input id="importFileInput" type="file" accept="application/json,.json,text/plain,.txt" onchange="importData(event)" style="display:none" />
-        </div>
         </div>`;
       app.innerHTML = html;
     }
@@ -2036,6 +2396,9 @@
     // ===== INIT =====
     loadData();
     render();
+
+    // Wire up persistent import file input
+    document.getElementById("importFileInput").addEventListener("change", importData);
 
     // Auto-lock after inactivity
     ["click","touchstart","keydown","mousemove","scroll"].forEach(ev => {
