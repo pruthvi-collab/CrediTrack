@@ -1171,12 +1171,24 @@
 
     function renderMenu(app) {
       const completedCount = getCompletedBorrowers().length;
+      const totalLent = borrowers.reduce((s, b) => s + getPlan(b).principal, 0);
+      const totalReceived = borrowers.reduce((s, b) => s + calcReceived(b), 0);
+      const totalPending = borrowers.reduce((s, b) => s + (getPlan(b).total - calcReceived(b)), 0);
+
       app.innerHTML = `
         <div class="fade-in">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:32px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
             <button class="back-btn" onclick="goHome()">←</button>
             <h2 style="font-size:22px;font-weight:700;color:var(--text)">Menu</h2>
           </div>
+
+          ${borrowers.length > 0 ? `
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:24px">
+              <div class="stat-card"><div class="stat-label">Lent</div><div class="stat-value" style="color:var(--text)">${fmt(totalLent)}</div></div>
+              <div class="stat-card"><div class="stat-label">Received</div><div class="stat-value" style="color:var(--success)">${fmt(totalReceived)}</div></div>
+              <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" style="color:var(--warn)">${fmt(totalPending)}</div></div>
+            </div>
+          ` : ''}
 
           <div style="display:flex;flex-direction:column;gap:12px">
             <div class="card" onclick="goWeekly()">
@@ -2172,10 +2184,9 @@
 
       if (borrowers.length > 0) {
         html += `
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:16px">
-            <div class="stat-card"><div class="stat-label">Lent</div><div class="stat-value" style="color:var(--text)">${fmt(totalLent)}</div></div>
-            <div class="stat-card"><div class="stat-label">Received</div><div class="stat-value" style="color:var(--success)">${fmt(totalReceived)}</div></div>
-            <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" style="color:var(--warn)">${fmt(totalPending)}</div></div>
+          <div class="stat-card" style="padding:16px 18px;text-align:left;margin-bottom:16px">
+            <div class="stat-label" style="margin-bottom:6px">Total Pending</div>
+            <div class="stat-value" style="color:var(--warn);font-size:28px">${fmt(totalPending)}</div>
           </div>
 
           <div style="margin-bottom:12px">
