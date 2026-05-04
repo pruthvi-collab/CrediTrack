@@ -552,6 +552,9 @@
         weeksCount = PLANS[newPlan].weeks;
       }
 
+      const commentEl = document.getElementById("commentInput");
+      const comment = commentEl?.value?.trim() || "";
+
       const newBorrower = {
         id: Date.now().toString(),
         name,
@@ -560,6 +563,7 @@
         createdAt: new Date().toISOString(),
       };
       if (customPlan) newBorrower.customPlan = customPlan;
+      if (comment) newBorrower.comment = comment;
 
       borrowers.push(newBorrower);
       saveData();
@@ -570,6 +574,14 @@
       customFinalWeekly = "";
       currentView = "home";
       render();
+    }
+
+    function updateBorrowerComment(id, value) {
+      const b = borrowers.find(x => x.id === id);
+      if (!b) return;
+      b.comment = value;
+      saveData();
+      // No re-render — would lose textarea focus
     }
 
     function toggleWeek(borrowerId, weekIdx) {
@@ -2278,6 +2290,11 @@
             </div>
           </div>
 
+          <div style="margin-bottom:16px">
+            <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">Comment</label>
+            <textarea oninput="updateBorrowerComment('${b.id}',this.value)" placeholder="No comment yet. Add a note about how the amount was given..." style="width:100%;min-height:60px;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 12px;font-size:13px;font-family:'DM Sans',sans-serif;outline:none;resize:vertical;box-sizing:border-box">${(b.comment || '').replace(/</g,'&lt;')}</textarea>
+          </div>
+
           <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden">
             <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
               <span style="font-size:14px;font-weight:600">Weekly Payments</span>
@@ -2398,6 +2415,13 @@
       html += `
             </div>
           </div>
+
+          <div style="margin-bottom:24px">
+            <label style="display:block;font-size:13px;font-weight:600;color:var(--text-dim);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px">Comment <span style="text-transform:none;letter-spacing:0;font-weight:400">(optional)</span></label>
+            <textarea id="commentInput" placeholder="e.g., Cash given on 12 Apr, transferred via UPI, etc." style="width:100%;min-height:70px;background:var(--input-bg);border:2px solid var(--border);border-radius:12px;color:var(--text);padding:12px 14px;font-size:14px;font-family:'DM Sans',sans-serif;outline:none;resize:vertical;box-sizing:border-box"></textarea>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">Note how/when the amount was given to this person</div>
+          </div>
+
           <button class="primary-btn" onclick="addBorrower()">Add Borrower</button>
         </div>`;
 
