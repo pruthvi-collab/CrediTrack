@@ -491,6 +491,14 @@
       if (!iso) return "";
       return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
     }
+    // Compact DD/MM for borrower cards
+    function fmtShortDate(iso) {
+      if (!iso) return "";
+      const d = new Date(iso);
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+      return `${day}/${month}`;
+    }
     // Return YYYY-MM-DD in UTC (matches what date inputs expect for stored UTC dates)
     function toUtcDateStr(iso) {
       if (!iso) return "";
@@ -1595,13 +1603,16 @@
         completed.forEach(b => {
           const plan = getPlan(b);
           const received = calcReceived(b);
+          // Compute completion date: last paid week's date (if available)
+          const lastWeek = b.weeks[b.weeks.length - 1];
+          const completionIso = isWeekPaid(lastWeek) ? getWeekDate(lastWeek) : b.createdAt;
           html += `
             <div class="card" onclick="goDetail('${b.id}')">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
                 <div>
                   <div style="font-size:16px;font-weight:600">${b.name}</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${plan.weeks} weeks</div>
-                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Credited on ${fmtDate(b.createdAt)}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cr: ${fmtShortDate(b.createdAt)} · Ex-Comp: ${fmtShortDate(completionIso)}</div>
                 </div>
                 <span class="badge-complete">COMPLETE</span>
               </div>
@@ -2140,6 +2151,11 @@
         // Show "X days since" only if not overdue, not complete, and 5+ days since last payment
         const showNearingDue = !overdue.overdue && !isComplete && daysSince !== null && daysSince >= 5;
 
+        // Expected completion: anchor on Week 1 paid date if available, else credited date
+        const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
+        const expectedEnd = new Date(anchorIso);
+        expectedEnd.setUTCDate(expectedEnd.getUTCDate() + plan.weeks * 7);
+
         html += `
           <div class="card" onclick="goDetail('${b.id}')" style="${overdue.overdue ? 'border:1px solid var(--danger)' : ''}">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
@@ -2150,7 +2166,7 @@
                   ${showNearingDue ? `<span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 8px;border-radius:20px;font-weight:600">${daysSince}d since last</span>` : ''}
                 </div>
                 <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${paid}/${plan.weeks} weeks</div>
-                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Credited on ${fmtDate(b.createdAt)}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cr: ${fmtShortDate(b.createdAt)} · Ex-Comp: ${fmtShortDate(expectedEnd.toISOString())}</div>
               </div>
               <div style="text-align:right">
                 ${isComplete
