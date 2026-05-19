@@ -288,7 +288,8 @@
       };
     }
 
-    let borrowers = [];
+    let borrowers = []; // Will be loaded; preloaded fallback below
+    const PRELOADED_BORROWERS = [{"id": "1775335933733", "name": "Somashekar", "plan": 5000, "weeks": [{"paid": true, "date": "2026-03-07T00:00:00.000Z"}, {"paid": true, "date": "2026-03-14T00:00:00.000Z"}, {"paid": true, "date": "2026-03-21T00:00:00.000Z"}, {"paid": true, "date": "2026-03-28T00:00:00.000Z"}, {"paid": true, "date": "2026-04-04T20:52:25.602Z"}, {"paid": true, "date": "2026-04-11T13:18:54.876Z"}, {"paid": true, "date": "2026-04-18T05:21:04.838Z"}, {"paid": true, "date": "2026-04-25T06:27:37.719Z"}, {"paid": true, "date": "2026-05-02T15:12:20.323Z"}, {"paid": true, "date": "2026-05-09T05:02:54.926Z"}, {"paid": true, "date": "2026-05-16T05:08:10.369Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-02-28T18:30:00.000Z"}, {"id": "1775335990497", "name": "Santosh", "plan": 5000, "weeks": [{"paid": true, "date": "2026-03-13T00:00:00.000Z"}, {"paid": true, "date": "2026-03-20T00:00:00.000Z"}, {"paid": true, "date": "2026-03-27T00:00:00.000Z"}, {"paid": true, "date": "2026-04-03T00:00:00.000Z"}, {"paid": true, "date": "2026-04-10T10:17:41.031Z"}, {"paid": true, "date": "2026-04-17T04:09:45.990Z"}, {"paid": true, "date": "2026-04-24T05:29:59.159Z"}, {"paid": true, "date": "2026-05-01T05:32:19.998Z"}, {"paid": true, "date": "2026-05-08T05:43:11.334Z"}, {"paid": true, "date": "2026-05-15T05:43:50.237Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-03-05T18:30:00.000Z"}, {"id": "1775336215171", "name": "Balaji", "plan": 5000, "weeks": [{"paid": true, "date": "2026-03-18T00:00:00.000Z"}, {"paid": true, "date": "2026-03-25T00:00:00.000Z"}, {"paid": true, "date": "2026-04-07T19:15:46.234Z"}, {"paid": true, "date": "2026-04-09T06:04:06.034Z"}, {"paid": true, "date": "2026-04-14T05:28:54.549Z"}, {"paid": true, "date": "2026-04-21T03:39:23.343Z"}, {"paid": true, "date": "2026-04-28T03:16:50.045Z"}, {"paid": true, "date": "2026-05-05T19:21:21.521Z"}, {"paid": true, "date": "2026-05-12T04:56:41.934Z"}, {"paid": true, "date": "2026-05-19T03:43:59.875Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-03-08T18:30:00.000Z"}, {"id": "1775338799027", "name": "Srinivas & Nagaraju", "plan": 10000, "weeks": [{"paid": true, "date": "2026-03-22T00:00:00.000Z"}, {"paid": true, "date": "2026-03-29T00:00:00.000Z"}, {"paid": true, "date": "2026-04-05T00:00:00.000Z"}, {"paid": true, "date": "2026-04-12T12:56:13.992Z"}, {"paid": true, "date": "2026-04-19T15:13:38.542Z"}, {"paid": true, "date": "2026-04-29T00:00:00.000Z"}, {"paid": true, "date": "2026-05-05T04:49:34.014Z"}, {"paid": true, "date": "2026-05-11T15:33:38.111Z"}, {"paid": true, "date": "2026-05-19T08:22:24.483Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-03-15T18:30:00.000Z"}, {"id": "1775338924712", "name": "Pavankumar & Ramu", "plan": 10000, "weeks": [{"paid": true, "date": "2026-03-28T00:00:00.000Z"}, {"paid": true, "date": "2026-04-04T21:42:19.140Z"}, {"paid": true, "date": "2026-04-11T13:18:40.681Z"}, {"paid": true, "date": "2026-04-18T08:36:47.356Z"}, {"paid": true, "date": "2026-04-25T12:25:09.180Z"}, {"paid": true, "date": "2026-05-02T03:52:01.844Z"}, {"paid": true, "date": "2026-05-09T15:37:38.775Z"}, {"paid": true, "date": "2026-05-16T08:34:07.728Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-03-20T18:30:00.000Z"}, {"id": "1775339012598", "name": "Arun & Jagadeesh", "plan": 10000, "weeks": [{"paid": true, "date": "2026-04-06T15:10:29.473Z"}, {"paid": true, "date": "2026-04-13T06:02:15.319Z"}, {"paid": true, "date": "2026-04-20T03:49:40.801Z"}, {"paid": true, "date": "2026-04-27T05:01:48.250Z"}, {"paid": true, "date": "2026-05-04T08:40:35.338Z"}, {"paid": true, "date": "2026-05-11T08:42:52.668Z"}, {"paid": true, "date": "2026-05-18T08:18:28.665Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-03-27T18:30:00.000Z"}, {"id": "1775339048474", "name": "Kumar & Sashidhar", "plan": 10000, "weeks": [{"paid": true, "date": "2026-04-11T05:09:09.921Z"}, {"paid": true, "date": "2026-04-18T08:36:54.556Z"}, {"paid": true, "date": "2026-04-25T12:25:16.551Z"}, {"paid": true, "date": "2026-05-02T03:51:49.794Z"}, {"paid": true, "date": "2026-05-09T15:37:34.119Z"}, {"paid": true, "date": "2026-05-16T08:34:10.191Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-04T21:44:08.474Z"}, {"id": "1775493989544", "name": "Venkatesh", "plan": 5000, "weeks": [{"paid": true, "date": "2026-02-22T18:30:00.000Z"}, {"paid": true, "date": "2026-03-01T18:30:00.000Z"}, {"paid": true, "date": "2026-03-08T18:30:00.000Z"}, {"paid": true, "date": "2026-03-15T18:30:00.000Z"}, {"paid": true, "date": "2026-03-22T18:30:00.000Z"}, {"paid": true, "date": "2026-03-29T18:30:00.000Z"}, {"paid": true, "date": "2026-04-08T03:58:51.735Z"}, {"paid": true, "date": "2026-04-13T06:02:23.846Z"}, {"paid": true, "date": "2026-04-20T03:49:49.287Z"}, {"paid": true, "date": "2026-04-27T05:02:06.213Z"}, {"paid": true, "date": "2026-05-04T08:40:41.405Z"}, {"paid": true, "date": "2026-05-11T03:41:37.700Z"}, {"paid": true, "date": "2026-05-18T04:12:14.808Z"}, {"paid": true, "date": "2026-05-18T04:34:35.911Z"}, {"paid": true, "date": "2026-05-18T04:34:36.686Z"}], "createdAt": "2026-02-16T18:30:00.000Z"}, {"id": "1775721850538", "name": "Kiran", "plan": 5000, "weeks": [{"paid": true, "date": "2026-04-17T04:09:41.971Z"}, {"paid": true, "date": "2026-04-24T05:29:52.749Z"}, {"paid": true, "date": "2026-05-01T05:32:15.933Z"}, {"paid": true, "date": "2026-05-08T05:43:06.814Z"}, {"paid": true, "date": "2026-05-15T05:43:42.225Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-09T08:04:10.539Z"}, {"id": "1775721870291", "name": "Shariq", "plan": 5000, "weeks": [{"paid": true, "date": "2026-04-19T09:58:28.859Z"}, {"paid": true, "date": "2026-04-26T04:45:08.779Z"}, {"paid": true, "date": "2026-05-03T13:25:12.403Z"}, {"paid": true, "date": "2026-05-10T03:50:52.489Z"}, {"paid": true, "date": "2026-05-17T04:25:30.365Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-09T08:04:30.291Z"}, {"id": "1776092603643", "name": "Manoj", "plan": 5000, "weeks": [{"paid": true, "date": "2026-04-21T03:39:18.428Z"}, {"paid": true, "date": "2026-04-28T03:16:59.486Z"}, {"paid": true, "date": "2026-05-05T19:21:16.762Z"}, {"paid": true, "date": "2026-05-12T04:56:32.938Z"}, {"paid": true, "date": "2026-05-19T03:43:54.039Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-13T15:03:23.643Z"}, {"id": "1776193224360", "name": "Chetan", "plan": "custom", "weeks": [{"paid": true, "date": "2026-04-18T07:51:15.575Z"}, {"paid": true, "date": "2026-04-26T04:44:47.072Z"}, {"paid": true, "date": "2026-05-02T15:12:42.400Z"}, {"paid": true, "date": "2026-05-09T05:03:03.421Z"}, {"paid": true, "date": "2026-05-15T05:43:35.493Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-10T00:00:00.000Z", "customPlan": {"principal": 51000, "weekly": 4500, "weeks": 13, "total": 60000, "profit": 9000, "weeklyAmounts": [4500, 4500, 4500, 4500, 4500, 4500, 4500, 4500, 4500, 4500, 4500, 4500, 6000], "isCustom": true}}, {"id": "1776489853314", "name": "Nanjappa", "plan": 5000, "weeks": [{"paid": true, "date": "2026-02-14T00:00:00.000Z"}, {"paid": true, "date": "2026-02-21T00:00:00.000Z"}, {"paid": true, "date": "2026-02-28T00:00:00.000Z"}, {"paid": true, "date": "2026-03-07T00:00:00.000Z"}, {"paid": true, "date": "2026-03-14T00:00:00.000Z"}, {"paid": true, "date": "2026-03-21T00:00:00.000Z"}, {"paid": true, "date": "2026-03-28T00:00:00.000Z"}, {"paid": true, "date": "2026-04-04T00:00:00.000Z"}, {"paid": true, "date": "2026-04-11T00:00:00.000Z"}, {"paid": true, "date": "2026-04-18T05:24:45.011Z"}, {"paid": true, "date": "2026-04-25T06:27:40.376Z"}, {"paid": true, "date": "2026-05-02T15:12:24.920Z"}, {"paid": true, "date": "2026-05-09T05:02:52.365Z"}, {"paid": true, "date": "2026-05-16T05:08:11.607Z"}, {"paid": true, "date": "2026-05-17T03:45:12.156Z"}], "createdAt": "2026-02-07T00:00:00.000Z"}, {"id": "1776658742505", "name": "Raju", "plan": 5000, "weeks": [{"paid": true, "date": "2026-04-27T16:04:39.796Z"}, {"paid": true, "date": "2026-05-04T04:53:28.012Z"}, {"paid": true, "date": "2026-05-11T03:41:23.192Z"}, {"paid": true, "date": "2026-05-18T05:27:44.653Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-20T04:19:02.506Z"}, {"id": "1776681066038", "name": "Mahadev", "plan": 3500, "weeks": [{"paid": true, "date": "2026-04-27T16:04:44.194Z"}, {"paid": true, "date": "2026-05-04T04:53:25.176Z"}, {"paid": true, "date": "2026-05-11T03:41:25.240Z"}, {"paid": true, "date": "2026-05-18T05:27:45.578Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-20T10:31:06.038Z"}, {"id": "1777182253624", "name": "Akshay", "plan": 5000, "weeks": [{"paid": true, "date": "2026-05-03T13:25:15.033Z"}, {"paid": true, "date": "2026-05-10T16:53:59.443Z"}, {"paid": true, "date": "2026-05-17T13:24:58.988Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-26T05:44:13.624Z"}, {"id": "1777379776798", "name": "John", "plan": "custom", "weeks": [{"paid": true, "date": "2026-05-07T04:27:31.976Z"}, {"paid": true, "date": "2026-05-15T05:43:10.048Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-04-29T00:00:00.000Z", "customPlan": {"principal": 25500, "weekly": 3000, "weeks": 10, "total": 30000, "profit": 4500, "weeklyAmounts": null, "isCustom": true}}, {"id": "1777881598726", "name": "Nagesh", "plan": 5000, "weeks": [{"paid": true, "date": "2026-05-12T04:56:36.334Z"}, {"paid": true, "date": "2026-05-19T08:22:30.887Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-04T07:59:58.726Z", "comment": "via 811 upi"}, {"id": "1777881631322", "name": "Nagaraj", "plan": 3500, "weeks": [{"paid": true, "date": "2026-05-14T05:23:51.584Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-04T08:00:31.322Z", "comment": "via 811 Ac transfer"}, {"id": "1777881663106", "name": "Ravi", "plan": 3500, "weeks": [{"paid": true, "date": "2026-05-14T05:23:50.655Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-04T08:01:03.106Z", "comment": "via icici ac transfer"}, {"id": "1778077507779", "name": "Naveen", "plan": 3500, "weeks": [{"paid": true, "date": "2026-05-13T04:58:22.106Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-06T14:25:07.779Z", "comment": "Via icici ac"}, {"id": "1778077523885", "name": "Pradeep", "plan": 3500, "weeks": [{"paid": true, "date": "2026-05-13T04:58:21.232Z"}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-06T14:25:23.885Z", "comment": "Via icici ac"}, {"id": "1778989549916", "name": "Nanjappa", "plan": 5000, "weeks": [{"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-17T03:45:49.916Z", "comment": "Via Phonepe"}, {"id": "1779078921123", "name": "Venkatesh", "plan": 5000, "weeks": [{"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}, {"paid": false, "date": null}], "createdAt": "2026-05-18T04:35:21.123Z", "comment": "Via Phonepe"}];
     let currentView = "home";
     let selectedId = null;
     let newPlan = 5000;
@@ -316,7 +317,12 @@
     function loadData() {
       try {
         const raw = localStorage.getItem("weekly-payments-logbook");
-        if (raw) borrowers = JSON.parse(raw);
+        if (raw) {
+          borrowers = JSON.parse(raw);
+        } else if (typeof PRELOADED_BORROWERS !== "undefined") {
+          borrowers = PRELOADED_BORROWERS;
+          saveData(); // Persist preloaded data to localStorage so it sticks
+        }
       } catch (e) {}
       try {
         theme = localStorage.getItem("creditrack-theme") || "dark";
@@ -1620,7 +1626,7 @@
                 <div>
                   <div style="font-size:16px;font-weight:600">${b.name}</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${plan.weeks} weeks</div>
-                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cr: ${fmtShortDate(b.createdAt)} · Ex-Comp: ${fmtShortDate(completionIso)}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cr: ${fmtShortDate(b.createdAt)} · Comp: ${fmtShortDate(completionIso)}</div>
                 </div>
                 <span class="badge-complete">COMPLETE</span>
               </div>
@@ -2172,12 +2178,14 @@
     }
 
     function getProfitBreakdown() {
-      // Realized = profit from fully completed loans
-      // Unrealized = profit on track to be earned from active loans (proportional to weeks paid)
-      // Accrual = sum of (profit per week × weeks paid) across all loans
+      // Realized = profit from fully completed loans (locked-in earnings)
+      // In-Progress = accrued profit portion of active loans (earned but not yet locked)
+      // Unrealized = profit still to be earned from active loans
+      // Realized + InProgress + Unrealized = Expected Total
+      // Accrual = Realized + InProgress (total earned to date)
       let realized = 0;
+      let inProgress = 0;
       let unrealized = 0;
-      let accrual = 0;
       let expectedTotal = 0;
 
       borrowers.forEach(b => {
@@ -2189,16 +2197,15 @@
 
         if (allPaid) {
           realized += plan.profit;
-          accrual += plan.profit;
         } else {
-          // Per-week profit share
           const profitPerWeek = plan.weeks > 0 ? plan.profit / plan.weeks : 0;
-          accrual += profitPerWeek * paid;
+          inProgress += profitPerWeek * paid;
           unrealized += plan.profit - (profitPerWeek * paid);
         }
       });
 
-      return { realized, unrealized, accrual, expectedTotal };
+      const accrual = realized + inProgress;
+      return { realized, inProgress, unrealized, accrual, expectedTotal };
     }
 
     function renderCashflow(app) {
@@ -2259,27 +2266,34 @@
           <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:10px">
             <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Accrual Profit (Earned to date)</div>
             <div class="mono" style="font-size:26px;font-weight:700;color:#a78bfa">${fmt(Math.round(profitData.accrual))}</div>
-            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">Profit accrued week-by-week as payments come in</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:4px">Realized + In-Progress (active loans' earned portion)</div>
           </div>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
-            <div class="stat-card" style="text-align:left;padding:14px 16px">
-              <div class="stat-label" style="margin-bottom:4px">Realized</div>
-              <div class="stat-value" style="color:var(--success);font-size:18px">${fmt(profitData.realized)}</div>
-              <div style="font-size:10px;color:var(--text-dim);margin-top:2px">From completed loans</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+            <div class="stat-card" style="text-align:left;padding:12px 14px">
+              <div class="stat-label" style="margin-bottom:4px;font-size:9px">Realized</div>
+              <div class="stat-value" style="color:var(--success);font-size:15px">${fmt(profitData.realized)}</div>
+              <div style="font-size:9px;color:var(--text-dim);margin-top:2px">Completed loans</div>
             </div>
-            <div class="stat-card" style="text-align:left;padding:14px 16px">
-              <div class="stat-label" style="margin-bottom:4px">Unrealized</div>
-              <div class="stat-value" style="color:var(--warn);font-size:18px">${fmt(profitData.unrealized)}</div>
-              <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Pipeline (in active loans)</div>
+            <div class="stat-card" style="text-align:left;padding:12px 14px">
+              <div class="stat-label" style="margin-bottom:4px;font-size:9px">In-Progress</div>
+              <div class="stat-value" style="color:#06b6d4;font-size:15px">${fmt(Math.round(profitData.inProgress))}</div>
+              <div style="font-size:9px;color:var(--text-dim);margin-top:2px">Active, earned share</div>
+            </div>
+            <div class="stat-card" style="text-align:left;padding:12px 14px">
+              <div class="stat-label" style="margin-bottom:4px;font-size:9px">Unrealized</div>
+              <div class="stat-value" style="color:var(--warn);font-size:15px">${fmt(Math.round(profitData.unrealized))}</div>
+              <div style="font-size:9px;color:var(--text-dim);margin-top:2px">Pipeline</div>
             </div>
           </div>
 
           <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:24px">
             <div style="font-size:11px;color:var(--text-dim);line-height:1.6">
-              <strong style="color:var(--text)">Realized:</strong> Profit from loans that are fully repaid.<br>
-              <strong style="color:var(--text)">Unrealized:</strong> Profit you'll earn once active loans complete.<br>
-              <strong style="color:var(--text)">Accrual:</strong> Profit recognized progressively, week-by-week, as actual payments are received. More accurate week-to-week measure than waiting for full completion.
+              <strong style="color:var(--text)">Realized:</strong> Profit locked in from fully completed loans.<br>
+              <strong style="color:var(--text)">In-Progress:</strong> Profit accrued so far from active loans (proportional to weeks paid).<br>
+              <strong style="color:var(--text)">Unrealized:</strong> Remaining profit to be earned from active loans.<br>
+              <strong style="color:var(--text)">Accrual:</strong> Realized + In-Progress.<br>
+              <strong style="color:var(--accent)">Total Expected: ${fmt(profitData.expectedTotal)}</strong> = Realized + In-Progress + Unrealized
             </div>
           </div>
 
@@ -2434,13 +2448,18 @@
                 <input type="date" value="${toUtcDateStr(b.createdAt)}" onchange="updateCreditedDate('${b.id}',this.value)" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:11px;padding:3px 6px;font-family:'DM Sans',sans-serif;outline:none" />
               </div>
               ${(() => {
+                if (isComplete) {
+                  // Actual completion = date of last paid week
+                  const lastWeek = b.weeks[b.weeks.length - 1];
+                  const completionIso = isWeekPaid(lastWeek) ? getWeekDate(lastWeek) : b.createdAt;
+                  return `<div style="font-size:11px;color:var(--text-dim);margin-top:4px">Completed on: <span style="color:var(--success)">${fmtDate(completionIso)}</span></div>`;
+                }
                 // Expected completion: anchor on Week 1 payment date if available, else credited date
                 const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
                 const anchor = new Date(anchorIso);
                 const expectedEnd = new Date(anchor);
                 expectedEnd.setUTCDate(anchor.getUTCDate() + plan.weeks * 7);
-                const label = isComplete ? "Completed" : "Expected completion";
-                return `<div style="font-size:11px;color:var(--text-dim);margin-top:4px">${label}: <span style="color:var(--accent)">${fmtDate(expectedEnd.toISOString())}</span></div>`;
+                return `<div style="font-size:11px;color:var(--text-dim);margin-top:4px">Expected completion: <span style="color:var(--accent)">${fmtDate(expectedEnd.toISOString())}</span></div>`;
               })()}
             </div>
           </div>
