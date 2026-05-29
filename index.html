@@ -1212,9 +1212,11 @@
 
     function renderMenu(app) {
       const completedCount = getCompletedBorrowers().length;
-      const totalLent = borrowers.reduce((s, b) => s + getPlan(b).principal, 0);
-      const totalReceived = borrowers.reduce((s, b) => s + calcReceived(b), 0);
-      const totalPending = borrowers.reduce((s, b) => s + (getPlan(b).total - calcReceived(b)), 0);
+      // Only count active (not fully paid) borrowers for Lent and Received totals
+      const activeBorrowers = borrowers.filter(b => !b.weeks.every(isWeekPaid));
+      const totalLent = activeBorrowers.reduce((s, b) => s + getPlan(b).principal, 0);
+      const totalReceived = activeBorrowers.reduce((s, b) => s + calcReceived(b), 0);
+      const totalPending = activeBorrowers.reduce((s, b) => s + (getPlan(b).total - calcReceived(b)), 0);
 
       app.innerHTML = `
         <div class="fade-in">
@@ -2177,6 +2179,60 @@
       return { total, items };
     }
 
+    // Profit accruing within a date range (start inclusive, end exclusive)
+    // For each active borrower, count weeks whose scheduled due date falls in the range,
+    // and multiply by (profit / weeks) to get the accrual share for that period
+    function getProfitInRange(start, end) {
+      let projected = 0;
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const profitPerWeek = plan.weeks > 0 ? plan.profit / plan.weeks : 0;
+        const credited = new Date(b.createdAt);
+        for (let i = 0; i < plan.weeks; i++) {
+          const dueDate = new Date(credited);
+          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * 7);
+          if (dueDate >= start && dueDate < end) {
+            projected += profitPerWeek;
+          }
+        }
+      });
+      return projected;
+    }
+
+    // Calendar half-year boundaries: H1 = Jan-Jun, H2 = Jul-Dec
+    function getCalendarHalfYears() {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth();
+      const isH1 = month < 6;
+
+      const currentStart = new Date(Date.UTC(year, isH1 ? 0 : 6, 1));
+      const currentEnd = new Date(Date.UTC(year, isH1 ? 6 : 12, 1));
+      const nextStart = new Date(Date.UTC(year, isH1 ? 6 : 12, 1));
+      const nextEnd = new Date(Date.UTC(year, isH1 ? 12 : 18, 1));
+
+      return {
+        currentLabel: `H${isH1 ? 1 : 2} ${year}`,
+        currentStart, currentEnd,
+        nextLabel: `H${isH1 ? 2 : 1} ${isH1 ? year : year + 1}`,
+        nextStart, nextEnd,
+      };
+    }
+
+    // Rolling 6-month windows from today
+    function getRollingHalfYears() {
+      const today = new Date();
+      today.setUTCHours(0, 0, 0, 0);
+      const sixMonths = new Date(today);
+      sixMonths.setUTCMonth(today.getUTCMonth() + 6);
+      const twelveMonths = new Date(today);
+      twelveMonths.setUTCMonth(today.getUTCMonth() + 12);
+      return {
+        firstStart: today, firstEnd: sixMonths,
+        secondStart: sixMonths, secondEnd: twelveMonths,
+      };
+    }
+
     function getProfitBreakdown() {
       // Realized = profit from fully completed loans (locked-in earnings)
       // In-Progress = accrued profit portion of active loans (earned but not yet locked)
@@ -2258,6 +2314,45 @@
       });
 
       if (next7.items.length > 0) html += `</div>`;
+
+      // Half-yearly profit projections
+      const calHalf = getCalendarHalfYears();
+      const rollHalf = getRollingHalfYears();
+      const currentHalfProfit = getProfitInRange(calHalf.currentStart, calHalf.currentEnd);
+      const nextHalfProfit = getProfitInRange(calHalf.nextStart, calHalf.nextEnd);
+      const rollFirstProfit = getProfitInRange(rollHalf.firstStart, rollHalf.firstEnd);
+      const rollSecondProfit = getProfitInRange(rollHalf.secondStart, rollHalf.secondEnd);
+
+      html += `
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Half-Yearly Profit Projection</div>
+
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:10px">
+            <div style="font-size:11px;color:var(--text-dim);font-weight:600;margin-bottom:10px">CALENDAR HALF-YEARS</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div>
+                <div style="font-size:11px;color:var(--text-dim)">${calHalf.currentLabel}</div>
+                <div class="mono" style="font-size:18px;font-weight:700;color:#a78bfa;margin-top:2px">${fmt(Math.round(currentHalfProfit))}</div>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-dim)">${calHalf.nextLabel}</div>
+                <div class="mono" style="font-size:18px;font-weight:700;color:#06b6d4;margin-top:2px">${fmt(Math.round(nextHalfProfit))}</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:24px">
+            <div style="font-size:11px;color:var(--text-dim);font-weight:600;margin-bottom:10px">ROLLING 6 MONTHS</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div>
+                <div style="font-size:11px;color:var(--text-dim)">Next 6 months</div>
+                <div class="mono" style="font-size:18px;font-weight:700;color:#a78bfa;margin-top:2px">${fmt(Math.round(rollFirstProfit))}</div>
+              </div>
+              <div>
+                <div style="font-size:11px;color:var(--text-dim)">Following 6 months</div>
+                <div class="mono" style="font-size:18px;font-weight:700;color:#06b6d4;margin-top:2px">${fmt(Math.round(rollSecondProfit))}</div>
+              </div>
+            </div>
+          </div>`;
 
       // Profit Breakdown section
       html += `
