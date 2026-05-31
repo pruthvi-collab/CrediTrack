@@ -301,7 +301,7 @@
     let searchQuery = "";
     let appLocked = false;
     let idleTimer = null;
-    const IDLE_LOCK_MS = 10 * 60 * 1000; // 10 minutes
+    const IDLE_LOCK_MS = 5 * 60 * 1000; // 5 minutes
     let pinInput = "";
     let pinStage = "enter"; // enter, set-new, confirm-new
     let pinTempNew = "";
@@ -1081,17 +1081,16 @@
     }
 
     function getWeeklySummary() {
-      // Week is Monday-Sunday
+      // Week is Monday-Sunday, computed in UTC since payment dates are stored as UTC midnight
       const now = new Date();
-      const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ... 6 = Saturday
-      // Calculate how many days to go back to reach Monday
-      // If today is Sunday (0), go back 6 days. Otherwise go back (dayOfWeek - 1) days.
+      // Get today's UTC year/month/day
+      const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const dayOfWeek = todayUtc.getUTCDay(); // 0 = Sunday, 1 = Monday ... 6 = Saturday
       const daysToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      const weekStart = new Date(now);
-      weekStart.setDate(now.getDate() - daysToMonday);
-      weekStart.setHours(0, 0, 0, 0);
+      const weekStart = new Date(todayUtc);
+      weekStart.setUTCDate(todayUtc.getUTCDate() - daysToMonday);
       const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 7);
+      weekEnd.setUTCDate(weekStart.getUTCDate() + 7);
 
       let received = 0;
       let expected = 0;
@@ -1100,7 +1099,7 @@
 
       borrowers.forEach(b => {
         const plan = getPlan(b);
-        // Received this week
+        // Received this week — sum amounts of any weeks paid with a date in this week
         b.weeks.forEach((w, i) => {
           if (isWeekPaid(w)) {
             const d = new Date(getWeekDate(w));
@@ -1112,21 +1111,29 @@
           }
         });
 
-        // Expected this week (based on schedule)
+        // Expected this week — weeks scheduled to be due in this UTC window
+        // Skip if borrower is fully paid (no more expected payments)
+        if (b.weeks.every(isWeekPaid)) return;
         const credited = new Date(b.createdAt);
         for (let i = 0; i < plan.weeks; i++) {
+          // Schedule: due date = credited UTC date + (i+1)*7 days
           const dueDate = new Date(credited);
-          dueDate.setDate(dueDate.getDate() + (i + 1) * 7);
-          if (dueDate >= weekStart && dueDate < weekEnd) {
+          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * 7);
+          // Normalize to UTC midnight for comparison
+          const dueUtc = new Date(Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate()));
+          if (dueUtc >= weekStart && dueUtc < weekEnd) {
             const amt = getBorrowerWeekAmount(b, i);
             expected += amt;
             const isPaid = isWeekPaid(b.weeks[i]);
-            expectedThisWeek.push({ id: b.id, name: b.name, weekNum: i + 1, amount: amt, dueDate, isPaid });
+            expectedThisWeek.push({ id: b.id, name: b.name, weekNum: i + 1, amount: amt, dueDate: dueUtc, isPaid });
           }
         }
       });
 
-      const weekLabel = `${weekStart.toLocaleDateString("en-IN", { day: "2-digit", month: "short" })} – ${new Date(weekEnd - 1).toLocaleDateString("en-IN", { day: "2-digit", month: "short" })}`;
+      // Build label: weekStart (Monday) to (weekEnd - 1 day = Sunday) using UTC-safe formatting
+      const lastDay = new Date(weekEnd);
+      lastDay.setUTCDate(weekEnd.getUTCDate() - 1);
+      const weekLabel = `${weekStart.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "UTC" })} – ${lastDay.toLocaleDateString("en-IN", { day: "2-digit", month: "short", timeZone: "UTC" })}`;
 
       return { received, expected, paidThisWeek, expectedThisWeek, weekLabel };
     }
@@ -1452,6 +1459,8 @@
       const { received, expected, paidThisWeek, expectedThisWeek, weekLabel } = getWeeklySummary();
       const pct = expected > 0 ? Math.round((received / expected) * 100) : 0;
       const pendingList = expectedThisWeek.filter(e => !e.isPaid);
+      // Paid count = weeks scheduled this week that are already paid (matches pending semantics)
+      const paidScheduledThisWeek = expectedThisWeek.filter(e => e.isPaid);
 
       let html = `
         <div class="fade-in">
@@ -1474,7 +1483,7 @@
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
             <div class="stat-card">
               <div class="stat-label">Paid</div>
-              <div class="stat-value" style="color:var(--success)">${paidThisWeek.length}</div>
+              <div class="stat-value" style="color:var(--success)">${paidScheduledThisWeek.length}</div>
             </div>
             <div class="stat-card">
               <div class="stat-label">Pending</div>
@@ -2727,9 +2736,31 @@
     ["click","touchstart","keydown","mousemove","scroll"].forEach(ev => {
       document.addEventListener(ev, resetIdleTimer, { passive: true });
     });
-    // Also lock when the tab is hidden for a while — arm on visibilitychange
+    // Track when the app was last hidden, and re-lock on resume if too much time passed
+    let lastHiddenAt = 0;
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) { clearIdleTimer(); } else { resetIdleTimer(); }
+      if (document.hidden) {
+        // App is being minimized/backgrounded — record timestamp
+        lastHiddenAt = Date.now();
+        clearIdleTimer();
+      } else {
+        // App resumed — if a PIN is set and we were hidden longer than the idle threshold, lock
+        if (hasPIN() && !appLocked && lastHiddenAt > 0) {
+          const elapsed = Date.now() - lastHiddenAt;
+          if (elapsed >= IDLE_LOCK_MS) {
+            appLocked = true;
+            pinInput = "";
+            pinError = "";
+            pinStage = "enter";
+            currentView = "home";
+            render();
+            lastHiddenAt = 0;
+            return;
+          }
+        }
+        lastHiddenAt = 0;
+        resetIdleTimer();
+      }
     });
     resetIdleTimer();
   </script>
