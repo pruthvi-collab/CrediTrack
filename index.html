@@ -1984,6 +1984,8 @@
 
     // Calendar state — current month being viewed
     let calendarMonthOffset = 0;
+    let cashflowTab = "inflow"; // "inflow", "breakdown", "monthly"
+    function setCashflowTab(t) { cashflowTab = t; render(); }
 
     function calendarNav(delta) {
       calendarMonthOffset += delta;
@@ -2242,6 +2244,83 @@
       };
     }
 
+    // Monthly earned profit share — for each month containing a paid week,
+    // add (plan.profit / plan.weeks) to that month's bucket.
+    // Returns array of { key: "YYYY-MM", label, profit } sorted oldest to newest.
+    function getMonthlyProfitShare() {
+      const buckets = {}; // "YYYY-MM" → profit total
+
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const profitPerWeek = plan.weeks > 0 ? plan.profit / plan.weeks : 0;
+
+        b.weeks.forEach(w => {
+          if (!isWeekPaid(w)) return;
+          const d = new Date(getWeekDate(w));
+          const y = d.getUTCFullYear();
+          const m = d.getUTCMonth();
+          const key = `${y}-${String(m + 1).padStart(2, "0")}`;
+          buckets[key] = (buckets[key] || 0) + profitPerWeek;
+        });
+      });
+
+      const keys = Object.keys(buckets).sort();
+      return keys.map(k => {
+        const [y, m] = k.split("-").map(Number);
+        const date = new Date(Date.UTC(y, m - 1, 1));
+        return {
+          key: k,
+          label: date.toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" }),
+          profit: buckets[k],
+        };
+      });
+    }
+
+    // Projected monthly profit share — for the next N months from current month,
+    // based on scheduled (unpaid) weeks' due dates
+    function getProjectedMonthlyProfitShare(monthsAhead) {
+      const buckets = {}; // "YYYY-MM" → profit total
+      const now = new Date();
+      const currentY = now.getUTCFullYear();
+      const currentM = now.getUTCMonth();
+      // Allow projections starting from the current month (in case there are remaining weeks due this month)
+      const startBoundary = new Date(Date.UTC(currentY, currentM, 1));
+      const endBoundary = new Date(Date.UTC(currentY, currentM + monthsAhead + 1, 1));
+
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const profitPerWeek = plan.weeks > 0 ? plan.profit / plan.weeks : 0;
+        const credited = new Date(b.createdAt);
+
+        for (let i = 0; i < plan.weeks; i++) {
+          // Skip already-paid weeks (they're in the historical buckets)
+          if (isWeekPaid(b.weeks[i])) continue;
+          // Schedule: due date = credited UTC date + (i+1)*7 days
+          const dueDate = new Date(credited);
+          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * 7);
+          if (dueDate < startBoundary || dueDate >= endBoundary) continue;
+          const y = dueDate.getUTCFullYear();
+          const m = dueDate.getUTCMonth();
+          const key = `${y}-${String(m + 1).padStart(2, "0")}`;
+          buckets[key] = (buckets[key] || 0) + profitPerWeek;
+        }
+      });
+
+      // Build a continuous list of months from current to current + monthsAhead
+      const result = [];
+      for (let i = 0; i <= monthsAhead; i++) {
+        const date = new Date(Date.UTC(currentY, currentM + i, 1));
+        const key = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+        result.push({
+          key,
+          label: date.toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" }),
+          profit: buckets[key] || 0,
+          isCurrent: i === 0,
+        });
+      }
+      return result;
+    }
+
     function getProfitBreakdown() {
       // Realized = profit from fully completed loans (locked-in earnings)
       // In-Progress = accrued profit portion of active loans (earned but not yet locked)
@@ -2278,9 +2357,16 @@
       const next30 = getInflowProjection(30);
       const profitData = getProfitBreakdown();
 
+      const tabs = [
+        { id: "inflow", label: "Inflow" },
+        { id: "breakdown", label: "Breakdown" },
+        { id: "monthly", label: "Monthly" },
+      ];
+      const activeTab = tabs.find(t => t.id === cashflowTab) ? cashflowTab : "inflow";
+
       let html = `
         <div class="fade-in">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
             <button class="back-btn" onclick="goMenu()">←</button>
             <div style="flex:1">
               <h2 style="font-size:22px;font-weight:700;color:var(--text)">Cash Flow & Profit</h2>
@@ -2288,8 +2374,19 @@
             </div>
           </div>
 
-          <!-- Inflow Projections -->
-          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Expected Inflow</div>
+          <div style="display:flex;background:var(--card-alt);border-radius:12px;padding:4px;margin-bottom:20px">`;
+
+      tabs.forEach(t => {
+        const isActive = t.id === activeTab;
+        html += `
+            <button onclick="setCashflowTab('${t.id}')" style="flex:1;background:${isActive ? 'var(--accent)' : 'transparent'};color:${isActive ? 'var(--fab-text)' : 'var(--text-dim)'};border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;transition:background 0.15s">${t.label}</button>`;
+      });
+
+      html += `</div>`;
+
+      if (activeTab === "inflow") {
+        // === INFLOW TAB ===
+        html += `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
             <div class="stat-card" style="text-align:left;padding:14px 16px">
               <div class="stat-label" style="margin-bottom:4px">Next 7 Days</div>
@@ -2301,18 +2398,18 @@
               <div class="stat-value" style="color:var(--accent);font-size:20px">${fmt(next30.total)}</div>
               <div style="font-size:10px;color:var(--text-dim);margin-top:2px">${next30.items.length} payment${next30.items.length === 1 ? '' : 's'}</div>
             </div>
-          </div>
+          </div>`;
 
-          ${next7.items.length > 0 ? `
-          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden;margin-bottom:24px">
+        if (next7.items.length > 0) {
+          html += `
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden">
             <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
               <span style="font-size:13px;font-weight:600;color:var(--text)">Upcoming This Week</span>
-            </div>` : '<div style="margin-bottom:24px"></div>'}`;
-
-      next7.items.forEach((p, i) => {
-        const dateStr = p.dueDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-        const borderBot = i < next7.items.length - 1 ? "border-bottom:1px solid var(--border);" : "";
-        html += `
+            </div>`;
+          next7.items.forEach((p, i) => {
+            const dateStr = p.dueDate.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+            const borderBot = i < next7.items.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+            html += `
             <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot}">
               <div>
                 <div style="font-size:14px;font-weight:500;color:var(--text)">${p.name}</div>
@@ -2320,53 +2417,14 @@
               </div>
               <div class="mono" style="font-size:14px;font-weight:700;color:var(--accent)">${fmt(p.amount)}</div>
             </div>`;
-      });
-
-      if (next7.items.length > 0) html += `</div>`;
-
-      // Half-yearly profit projections
-      const calHalf = getCalendarHalfYears();
-      const rollHalf = getRollingHalfYears();
-      const currentHalfProfit = getProfitInRange(calHalf.currentStart, calHalf.currentEnd);
-      const nextHalfProfit = getProfitInRange(calHalf.nextStart, calHalf.nextEnd);
-      const rollFirstProfit = getProfitInRange(rollHalf.firstStart, rollHalf.firstEnd);
-      const rollSecondProfit = getProfitInRange(rollHalf.secondStart, rollHalf.secondEnd);
-
-      html += `
-          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Half-Yearly Profit Projection</div>
-
-          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:10px">
-            <div style="font-size:11px;color:var(--text-dim);font-weight:600;margin-bottom:10px">CALENDAR HALF-YEARS</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-              <div>
-                <div style="font-size:11px;color:var(--text-dim)">${calHalf.currentLabel}</div>
-                <div class="mono" style="font-size:18px;font-weight:700;color:#a78bfa;margin-top:2px">${fmt(Math.round(currentHalfProfit))}</div>
-              </div>
-              <div>
-                <div style="font-size:11px;color:var(--text-dim)">${calHalf.nextLabel}</div>
-                <div class="mono" style="font-size:18px;font-weight:700;color:#06b6d4;margin-top:2px">${fmt(Math.round(nextHalfProfit))}</div>
-              </div>
-            </div>
-          </div>
-
-          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:24px">
-            <div style="font-size:11px;color:var(--text-dim);font-weight:600;margin-bottom:10px">ROLLING 6 MONTHS</div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-              <div>
-                <div style="font-size:11px;color:var(--text-dim)">Next 6 months</div>
-                <div class="mono" style="font-size:18px;font-weight:700;color:#a78bfa;margin-top:2px">${fmt(Math.round(rollFirstProfit))}</div>
-              </div>
-              <div>
-                <div style="font-size:11px;color:var(--text-dim)">Following 6 months</div>
-                <div class="mono" style="font-size:18px;font-weight:700;color:#06b6d4;margin-top:2px">${fmt(Math.round(rollSecondProfit))}</div>
-              </div>
-            </div>
-          </div>`;
-
-      // Profit Breakdown section
-      html += `
-          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Profit Breakdown</div>
-
+          });
+          html += `</div>`;
+        } else {
+          html += `<div style="text-align:center;padding:40px 20px"><div style="font-size:14px;color:var(--text-dim)">No payments expected in the next 7 days</div></div>`;
+        }
+      } else if (activeTab === "breakdown") {
+        // === BREAKDOWN TAB ===
+        html += `
           <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:10px">
             <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Accrual Profit (Earned to date)</div>
             <div class="mono" style="font-size:26px;font-weight:700;color:#a78bfa">${fmt(Math.round(profitData.accrual))}</div>
@@ -2391,7 +2449,7 @@
             </div>
           </div>
 
-          <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:24px">
+          <div style="background:var(--card-alt);border-radius:12px;padding:14px">
             <div style="font-size:11px;color:var(--text-dim);line-height:1.6">
               <strong style="color:var(--text)">Realized:</strong> Profit locked in from fully completed loans.<br>
               <strong style="color:var(--text)">In-Progress:</strong> Profit accrued so far from active loans (proportional to weeks paid).<br>
@@ -2399,8 +2457,73 @@
               <strong style="color:var(--text)">Accrual:</strong> Realized + In-Progress.<br>
               <strong style="color:var(--accent)">Total Expected: ${fmt(profitData.expectedTotal)}</strong> = Realized + In-Progress + Unrealized
             </div>
-          </div>
+          </div>`;
+      } else if (activeTab === "monthly") {
+        // === MONTHLY TAB ===
+        const monthlyShares = getMonthlyProfitShare();
+        if (monthlyShares.length > 0) {
+          const maxShare = Math.max(...monthlyShares.map(m => m.profit));
+          const totalShare = monthlyShares.reduce((s, m) => s + m.profit, 0);
+          html += `
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Earned Profit (All Months)</div>
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:14px;margin-bottom:20px">
+            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">`;
+          monthlyShares.forEach(m => {
+            const pct = (m.profit / maxShare) * 100;
+            html += `
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:11px;color:var(--text-dim);width:70px;font-weight:600">${m.label}</div>
+                <div style="flex:1;background:var(--bg);border-radius:100px;height:8px;overflow:hidden">
+                  <div style="background:linear-gradient(90deg,#a78bfa,#06b6d4);width:${pct}%;height:100%;border-radius:100px"></div>
+                </div>
+                <div class="mono" style="font-size:11px;color:#a78bfa;font-weight:600;min-width:80px;text-align:right">${fmt(Math.round(m.profit))}</div>
+              </div>`;
+          });
+          html += `
+            </div>
+            <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;justify-content:space-between;align-items:center">
+              <div style="font-size:11px;color:var(--text-dim)">Total earned (${monthlyShares.length} month${monthlyShares.length === 1 ? '' : 's'})</div>
+              <div class="mono" style="font-size:14px;font-weight:700;color:var(--accent)">${fmt(Math.round(totalShare))}</div>
+            </div>
+          </div>`;
+        }
 
+        const projected = getProjectedMonthlyProfitShare(4);
+        const projectedTotal = projected.reduce((s, m) => s + m.profit, 0);
+        if (projectedTotal > 0) {
+          const maxProj = Math.max(...projected.map(m => m.profit), 1);
+          html += `
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Projected Profit (Next 4 Months)</div>
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:14px">
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px;line-height:1.5">If all unpaid weeks are paid on schedule.</div>
+            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px">`;
+          projected.forEach(m => {
+            const pct = (m.profit / maxProj) * 100;
+            const labelText = m.isCurrent ? `${m.label} (current)` : m.label;
+            html += `
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="font-size:11px;color:var(--text-dim);width:100px;font-weight:600">${labelText}</div>
+                <div style="flex:1;background:var(--bg);border-radius:100px;height:8px;overflow:hidden">
+                  <div style="background:linear-gradient(90deg,#06b6d4,#22d3a7);width:${pct}%;height:100%;border-radius:100px"></div>
+                </div>
+                <div class="mono" style="font-size:11px;color:${m.profit > 0 ? '#06b6d4' : 'var(--text-dim)'};font-weight:600;min-width:80px;text-align:right">${fmt(Math.round(m.profit))}</div>
+              </div>`;
+          });
+          html += `
+            </div>
+            <div style="border-top:1px solid var(--border);padding-top:10px;display:flex;justify-content:space-between;align-items:center">
+              <div style="font-size:11px;color:var(--text-dim)">Total projected</div>
+              <div class="mono" style="font-size:14px;font-weight:700;color:#06b6d4">${fmt(Math.round(projectedTotal))}</div>
+            </div>
+          </div>`;
+        }
+
+        if (getMonthlyProfitShare().length === 0 && projectedTotal === 0) {
+          html += `<div style="text-align:center;padding:40px 20px"><div style="font-size:14px;color:var(--text-dim)">No profit data yet</div></div>`;
+        }
+      }
+
+      html += `
           ${borrowers.length === 0 ? `<div style="text-align:center;padding:40px 20px"><div style="font-size:14px;color:var(--text-dim)">No data yet</div></div>` : ''}
         </div>`;
 
