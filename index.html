@@ -2321,6 +2321,49 @@
       return result;
     }
 
+    // Net investment snapshot — three views of "how much is my money out"
+    function getInvestmentSnapshot() {
+      let outstandingPrincipal = 0;
+      let totalCapitalDeployed = 0;
+      let lifetimeLent = 0;
+      let lifetimeReceived = 0;
+      let activeCount = 0;
+      let completedCount = 0;
+
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const received = calcReceived(b);
+        const allPaid = b.weeks.every(isWeekPaid);
+
+        lifetimeLent += plan.principal;
+        lifetimeReceived += received;
+
+        if (allPaid) {
+          completedCount += 1;
+        } else {
+          activeCount += 1;
+          totalCapitalDeployed += plan.principal;
+          // Outstanding principal: each weekly payment returns (principal/weeks) of principal share
+          const principalPerWeek = plan.weeks > 0 ? plan.principal / plan.weeks : 0;
+          const paidCount = b.weeks.filter(isWeekPaid).length;
+          const principalReturned = principalPerWeek * paidCount;
+          outstandingPrincipal += Math.max(0, plan.principal - principalReturned);
+        }
+      });
+
+      const netOutflow = lifetimeLent - lifetimeReceived;
+
+      return {
+        outstandingPrincipal,
+        totalCapitalDeployed,
+        netOutflow,
+        lifetimeLent,
+        lifetimeReceived,
+        activeCount,
+        completedCount,
+      };
+    }
+
     function getProfitBreakdown() {
       // Realized = profit from fully completed loans (locked-in earnings)
       // In-Progress = accrued profit portion of active loans (earned but not yet locked)
@@ -2424,7 +2467,31 @@
         }
       } else if (activeTab === "breakdown") {
         // === BREAKDOWN TAB ===
+        const inv = getInvestmentSnapshot();
+        const isProfitPhase = inv.netOutflow < 0;
         html += `
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Net Investment</div>
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:16px;margin-bottom:20px">
+            <div style="display:flex;flex-direction:column;gap:14px">
+              <div>
+                <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Outstanding Principal</div>
+                <div class="mono" style="font-size:20px;font-weight:700;color:var(--warn)">${fmt(Math.round(inv.outstandingPrincipal))}</div>
+                <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Principal still owed on active loans</div>
+              </div>
+              <div style="border-top:1px solid var(--border);padding-top:14px">
+                <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Total Capital Deployed</div>
+                <div class="mono" style="font-size:20px;font-weight:700;color:var(--text)">${fmt(inv.totalCapitalDeployed)}</div>
+                <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Full principal across ${inv.activeCount} active loan${inv.activeCount === 1 ? '' : 's'}</div>
+              </div>
+              <div style="border-top:1px solid var(--border);padding-top:14px">
+                <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Cumulative Net Outflow</div>
+                <div class="mono" style="font-size:20px;font-weight:700;color:${isProfitPhase ? 'var(--success)' : 'var(--danger)'}">${isProfitPhase ? '+' : ''}${fmt(Math.round(Math.abs(inv.netOutflow)))}${isProfitPhase ? ' (in profit)' : ''}</div>
+                <div style="font-size:10px;color:var(--text-dim);margin-top:2px">Lifetime lent (${fmt(inv.lifetimeLent)}) − received (${fmt(inv.lifetimeReceived)})</div>
+              </div>
+            </div>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Profit Breakdown</div>
           <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:10px">
             <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Accrual Profit (Earned to date)</div>
             <div class="mono" style="font-size:26px;font-weight:700;color:#a78bfa">${fmt(Math.round(profitData.accrual))}</div>
