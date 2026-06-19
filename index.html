@@ -196,7 +196,6 @@
     const PLANS = {
       10000: { principal: 130000, weekly: 10000, weeks: 15, total: 150000, profit: 20000, weeklyAmounts: null },
       5000:  { principal: 65000,  weekly: 5000,  weeks: 15, total: 75000,  profit: 10000, weeklyAmounts: null },
-      4000:  { principal: 34000,  weekly: 4000,  weeks: 10, total: 40000,  profit: 6000,  weeklyAmounts: null },
       3500:  { principal: 42500,  weekly: 3500,  weeks: 14, total: 50000,  profit: 7500,  weeklyAmounts: [3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,4500] },
     };
 
@@ -822,6 +821,47 @@
     function goBackups() { currentView = "backups"; render(); }
 
     // ===== BACKUP HISTORY =====
+    // ===== AUTO-BACKUP =====
+    const AUTO_BACKUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+    function getAutoBackupEnabled() {
+      try { return localStorage.getItem("creditrack-autobackup") !== "off"; }
+      catch (e) { return true; }
+    }
+    function setAutoBackupEnabled(enabled) {
+      try { localStorage.setItem("creditrack-autobackup", enabled ? "on" : "off"); }
+      catch (e) {}
+    }
+    function getLastAutoBackup() {
+      try { return parseInt(localStorage.getItem("creditrack-autobackup-last") || "0", 10); }
+      catch (e) { return 0; }
+    }
+    function setLastAutoBackup(ts) {
+      try { localStorage.setItem("creditrack-autobackup-last", String(ts)); }
+      catch (e) {}
+    }
+    function runAutoBackupIfDue() {
+      if (!getAutoBackupEnabled()) return;
+      if (borrowers.length === 0) return; // nothing to back up
+      const now = Date.now();
+      const last = getLastAutoBackup();
+      if (now - last < AUTO_BACKUP_INTERVAL_MS) return;
+      // Create a snapshot in Backup History (silent — no file write, no share sheet)
+      const data = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        borrowers: borrowers,
+        autoBackup: true,
+      };
+      saveBackupSnapshot(JSON.stringify(data, null, 2));
+      setLastAutoBackup(now);
+    }
+
+    function toggleAutoBackup() {
+      setAutoBackupEnabled(!getAutoBackupEnabled());
+      render();
+    }
+
     function saveBackupSnapshot(json) {
       try {
         let history = JSON.parse(localStorage.getItem("creditrack-backups") || "[]");
@@ -933,6 +973,22 @@
         list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
       } else if (sortBy === "oldest") {
         list.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      } else if (sortBy === "duesoon") {
+        // Urgency ranking: overdue first (most days late = highest), then by days since last payment
+        // Completed borrowers are filtered out by getFilteredBorrowers anyway, but still safe
+        list.sort((a, b) => {
+          const aOver = getOverdueStatus(a);
+          const bOver = getOverdueStatus(b);
+          // Overdue borrowers always rank above non-overdue ones
+          if (aOver.overdue !== bOver.overdue) return aOver.overdue ? -1 : 1;
+          // Both overdue → larger daysLate first
+          if (aOver.overdue && bOver.overdue) return bOver.daysLate - aOver.daysLate;
+          // Neither overdue → larger daysSinceLastPayment first (more "at risk")
+          const aDays = getDaysSinceLastPayment(a);
+          const bDays = getDaysSinceLastPayment(b);
+          // Null = no payments yet, treat as 0 (least urgent)
+          return (bDays || 0) - (aDays || 0);
+        });
       } else if (sortBy === "name") {
         list.sort((a, b) => a.name.localeCompare(b.name));
       } else if (sortBy === "balance") {
@@ -1775,7 +1831,17 @@
 
           <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:16px">
             <div style="font-size:12px;color:var(--text-dim);line-height:1.5">
-              Every time you tap <strong style="color:var(--text)">💾 Backup</strong> on the home screen, a snapshot is automatically saved here. Your last 5 backups are kept in-app so you can quickly restore without needing a file.
+              Manual backups (via Menu → Backup Now) are saved here, plus auto-backups if enabled. Your last 5 snapshots are kept.
+            </div>
+          </div>
+
+          <div onclick="toggleAutoBackup()" style="background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text)">Auto-Backup (every 24h)</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${getAutoBackupEnabled() ? `Last: ${getLastAutoBackup() > 0 ? new Date(getLastAutoBackup()).toLocaleDateString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : 'Not yet run'}` : 'Disabled'}</div>
+            </div>
+            <div style="width:42px;height:24px;background:${getAutoBackupEnabled() ? 'var(--accent)' : 'var(--input-bg)'};border-radius:12px;position:relative;transition:background 0.2s">
+              <div style="position:absolute;top:2px;left:${getAutoBackupEnabled() ? '20px' : '2px'};width:20px;height:20px;background:white;border-radius:50%;transition:left 0.2s"></div>
             </div>
           </div>
 
@@ -1818,7 +1884,6 @@
       const planRates = [
         { key: "10000", label: "₹10,000/week", plan: PLANS[10000] },
         { key: "5000",  label: "₹5,000/week",  plan: PLANS[5000] },
-        { key: "4000",  label: "₹4,000/week",  plan: PLANS[4000] },
         { key: "3500",  label: "₹3,500/week",  plan: PLANS[3500] },
       ].map(p => ({ ...p, roi: getMonthlyROI(p.plan) }));
 
@@ -2695,6 +2760,7 @@
           <div style="display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;padding-bottom:4px">
             ${chip("Newest", "newest", sortBy === "newest", "setSort")}
             ${chip("Oldest", "oldest", sortBy === "oldest", "setSort")}
+            ${chip("Due Soon", "duesoon", sortBy === "duesoon", "setSort")}
           </div>`;
       }
 
@@ -2923,6 +2989,7 @@
     // ===== INIT =====
     loadData();
     render();
+    runAutoBackupIfDue();
 
     // Wire up persistent import file input
     document.getElementById("importFileInput").addEventListener("change", importData);
@@ -2955,6 +3022,7 @@
         }
         lastHiddenAt = 0;
         resetIdleTimer();
+        runAutoBackupIfDue();
       }
     });
     resetIdleTimer();
