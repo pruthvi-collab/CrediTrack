@@ -909,6 +909,59 @@
     function askDelete(id) { confirmDeleteId = id; render(); }
     function cancelDelete() { confirmDeleteId = null; render(); }
 
+    function askRenew(id) {
+      const b = borrowers.find(x => x.id === id);
+      if (!b) return;
+      const plan = getPlan(b);
+      const paidCount = b.weeks.filter(isWeekPaid).length;
+      const remainingWeeks = plan.weeks - paidCount;
+      const remainingAmount = plan.total - calcReceived(b);
+
+      const msg = `Renew loan for "${b.name}"?\n\n` +
+        `This will:\n` +
+        `• Mark ${remainingWeeks} remaining week${remainingWeeks === 1 ? '' : 's'} (${'\u20B9'}${remainingAmount.toLocaleString("en-IN")}) as paid with today's date\n` +
+        `• Close the current loan and move it to Completed Archive\n` +
+        `• Start a fresh loan with the same name and plan\n` +
+        `• Clear the comment so you can add new notes\n\n` +
+        `Continue?`;
+
+      if (!confirm(msg)) return;
+      renewBorrower(id);
+    }
+
+    function renewBorrower(id) {
+      const oldB = borrowers.find(x => x.id === id);
+      if (!oldB) return;
+      const plan = getPlan(oldB);
+      const todayIso = new Date().toISOString();
+
+      // Step 1: Close the current loan by marking all unpaid weeks as paid today
+      oldB.weeks = oldB.weeks.map(w => {
+        if (isWeekPaid(w)) return w;
+        return { paid: true, date: todayIso };
+      });
+
+      // Step 2: Create a fresh borrower with the same name and plan
+      const newBorrower = {
+        id: Date.now().toString(),
+        name: oldB.name,
+        plan: oldB.plan,
+        weeks: Array(plan.weeks).fill(null).map(() => ({ paid: false, date: null })),
+        createdAt: todayIso,
+        // Comment intentionally omitted (empty) so user can enter new notes
+      };
+      if (oldB.customPlan) newBorrower.customPlan = oldB.customPlan;
+
+      borrowers.push(newBorrower);
+      saveData();
+
+      // Navigate to the new borrower's detail page
+      selectedId = newBorrower.id;
+      currentView = "detail";
+      confirmDeleteId = null;
+      render();
+    }
+
     function updateCreditedDate(id, dateStr) {
       const b = borrowers.find(x => x.id === id);
       if (!b || !dateStr) return;
@@ -1161,8 +1214,9 @@
         });
 
         // Expected this week — weeks scheduled to be due in this UTC window
-        // Skip if borrower is fully paid (no more expected payments)
-        if (b.weeks.every(isWeekPaid)) return;
+        // Note: we DO include completed borrowers here, because if their final week
+        // was due this week (and is now paid), it should count in both Expected and Paid.
+        // Otherwise we'd inflate Received relative to Expected.
         const credited = new Date(b.createdAt);
         for (let i = 0; i < plan.weeks; i++) {
           // Schedule: due date = credited UTC date + (i+1)*7 days
@@ -1506,10 +1560,16 @@
 
     function renderWeekly(app) {
       const { received, expected, paidThisWeek, expectedThisWeek, weekLabel } = getWeeklySummary();
-      const pct = expected > 0 ? Math.round((received / expected) * 100) : 0;
       const pendingList = expectedThisWeek.filter(e => !e.isPaid);
-      // Paid count = weeks scheduled this week that are already paid (matches pending semantics)
+      // Paid count = weeks scheduled this week that are already paid
       const paidScheduledThisWeek = expectedThisWeek.filter(e => e.isPaid);
+      const totalScheduled = expectedThisWeek.length;
+      // Schedule completion based on counts
+      const schedulePct = totalScheduled > 0 ? Math.round((paidScheduledThisWeek.length / totalScheduled) * 100) : 0;
+      // paidThisWeek = ALL payments dated this week (includes catch-up & advance payments)
+      // Total payments received this week may exceed totalScheduled if borrowers paid multiple weeks
+      const receivedCount = paidThisWeek.length;
+      const catchUpCount = Math.max(0, receivedCount - paidScheduledThisWeek.length);
 
       let html = `
         <div class="fade-in">
@@ -1524,9 +1584,15 @@
           <div style="background:var(--card-alt);border-radius:14px;padding:20px;margin-bottom:16px">
             <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Received this week</div>
             <div class="mono" style="font-size:32px;font-weight:700;color:var(--success)">${fmt(received)}</div>
-            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">of ${fmt(expected)} expected this week</div>
-            <div class="progress-bar" style="height:8px;margin-top:12px"><div class="progress-fill" style="width:${Math.min(pct,100)}%;height:8px"></div></div>
-            <div style="font-size:11px;color:var(--accent);margin-top:6px;font-family:'JetBrains Mono',monospace">${Math.min(pct,100)}% of this week's schedule collected${pct > 100 ? ` · +${fmt(received - expected)} in catch-up payments` : ''}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${receivedCount} payment${receivedCount === 1 ? '' : 's'} received${catchUpCount > 0 ? ` (incl. ${catchUpCount} catch-up/advance)` : ''}</div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:14px;padding:20px;margin-bottom:16px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Schedule progress</div>
+            <div class="mono" style="font-size:24px;font-weight:700;color:${schedulePct === 100 ? 'var(--success)' : 'var(--accent)'}">${paidScheduledThisWeek.length}/${totalScheduled}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">of ${fmt(expected)} scheduled this week</div>
+            <div class="progress-bar" style="height:8px;margin-top:12px"><div class="progress-fill" style="width:${schedulePct}%;height:8px;${schedulePct === 100 ? 'background:var(--success)' : ''}"></div></div>
+            <div style="font-size:11px;color:${schedulePct === 100 ? 'var(--success)' : 'var(--accent)'};margin-top:6px;font-family:'JetBrains Mono',monospace">${schedulePct}% of this week's borrowers paid</div>
           </div>
 
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
@@ -2881,8 +2947,8 @@
 
       html += `</div>`;
 
-      // Delete section
-      html += `<div style="margin-top:24px;margin-bottom:40px">`;
+      // Renew + Delete section
+      html += `<div style="margin-top:24px;margin-bottom:40px;display:flex;flex-direction:column;gap:10px">`;
       if (confirmDeleteId === b.id) {
         html += `
           <div style="display:flex;gap:10px">
@@ -2891,6 +2957,11 @@
           </div>`;
       } else {
         html += `<button class="delete-btn" onclick="askDelete('${b.id}')">Remove Borrower</button>`;
+        // Renew option — only useful when there's at least one unpaid week
+        const hasUnpaidWeeks = b.weeks.some(w => !isWeekPaid(w));
+        if (hasUnpaidWeeks) {
+          html += `<button onclick="askRenew('${b.id}')" style="width:100%;background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:12px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">🔄 Renew Loan</button>`;
+        }
       }
       html += `</div></div>`;
 
