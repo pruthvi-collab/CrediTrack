@@ -294,7 +294,7 @@
     let confirmDeleteId = null;
     let showProfitBreakdown = false;
     let editingNameId = null;
-    let sortBy = "newest"; // newest, oldest, name, balance
+    let sortBy = "duesoon"; // newest, oldest, duesoon, name, balance
     let filterBy = "all";  // all, active, completed
     let searchQuery = "";
     let appLocked = false;
@@ -1344,6 +1344,32 @@
           ` : ''}
 
           <div style="display:flex;flex-direction:column;gap:12px">
+            <div class="card" onclick="goCashflow()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(13,148,136,0.15);color:#0d9488">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Cash Flow & Profit</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">7/30-day inflow + accrual breakdown</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="goProfit()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(167,139,250,0.15);color:#a78bfa">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Profits</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Earned and expected profit breakdown</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
             <div class="card" onclick="goWeekly()">
               <div style="display:flex;align-items:center;gap:14px">
                 <div class="menu-icon" style="background:rgba(34,211,167,0.15);color:#22d3a7">
@@ -1383,45 +1409,6 @@
               </div>
             </div>
 
-            <div class="card" onclick="goArchive()">
-              <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(148,163,184,0.15);color:#94a3b8">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
-                </div>
-                <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">Completed Archive</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${completedCount} completed ${completedCount === 1 ? 'loan' : 'loans'}</div>
-                </div>
-                <span style="color:var(--text-dim);font-size:18px">›</span>
-              </div>
-            </div>
-
-            <div class="card" onclick="goProfit()">
-              <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(167,139,250,0.15);color:#a78bfa">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-                </div>
-                <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">Profits</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Earned and expected profit breakdown</div>
-                </div>
-                <span style="color:var(--text-dim);font-size:18px">›</span>
-              </div>
-            </div>
-
-            <div class="card" onclick="goCashflow()">
-              <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(13,148,136,0.15);color:#0d9488">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
-                </div>
-                <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">Cash Flow & Profit</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">7/30-day inflow + accrual breakdown</div>
-                </div>
-                <span style="color:var(--text-dim);font-size:18px">›</span>
-              </div>
-            </div>
-
             <div class="card" onclick="goRates()">
               <div style="display:flex;align-items:center;gap:14px">
                 <div class="menu-icon" style="background:rgba(6,182,212,0.15);color:#06b6d4">
@@ -1430,6 +1417,19 @@
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Rate of Return</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Monthly ROI % per plan and borrower</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="goArchive()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(148,163,184,0.15);color:#94a3b8">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Completed Archive</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${completedCount} completed ${completedCount === 1 ? 'loan' : 'loans'}</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -2120,7 +2120,7 @@
 
     // Calendar state — current month being viewed
     let calendarMonthOffset = 0;
-    let cashflowTab = "inflow"; // "inflow", "breakdown", "monthly"
+    let cashflowTab = "monthly"; // "inflow", "breakdown", "monthly"
     function setCashflowTab(t) { cashflowTab = t; render(); }
 
     function calendarNav(delta) {
@@ -2537,11 +2537,11 @@
       const profitData = getProfitBreakdown();
 
       const tabs = [
+        { id: "monthly", label: "Monthly" },
         { id: "inflow", label: "Inflow" },
         { id: "breakdown", label: "Breakdown" },
-        { id: "monthly", label: "Monthly" },
       ];
-      const activeTab = tabs.find(t => t.id === cashflowTab) ? cashflowTab : "inflow";
+      const activeTab = tabs.find(t => t.id === cashflowTab) ? cashflowTab : "monthly";
 
       let html = `
         <div class="fade-in">
@@ -2741,7 +2741,7 @@
         </div>`;
       }
       let html = `<div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">`;
-      filtered.forEach(b => {
+      filtered.forEach((b, idx) => {
         const plan = getPlan(b);
         const paid = b.weeks.filter(isWeekPaid).length;
         const received = calcReceived(b);
@@ -2763,7 +2763,7 @@
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
               <div>
                 <div style="font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  ${b.name}
+                  <span style="color:var(--text-dim);font-size:13px;font-weight:500">${idx + 1}.</span> ${b.name}
                   ${overdue.overdue ? `<span style="font-size:10px;background:rgba(239,68,68,0.15);color:var(--danger);padding:2px 8px;border-radius:20px;font-weight:700">OVERDUE ${overdue.daysLate}d</span>` : ''}
                   ${showNearingDue ? `<span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 8px;border-radius:20px;font-weight:600">${daysSince}d since last</span>` : ''}
                 </div>
