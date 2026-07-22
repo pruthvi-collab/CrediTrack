@@ -909,30 +909,58 @@
     function askDelete(id) { confirmDeleteId = id; render(); }
     function cancelDelete() { confirmDeleteId = null; render(); }
 
-    function askRenew(id) {
-      const b = borrowers.find(x => x.id === id);
-      if (!b) return;
-      const plan = getPlan(b);
-      const paidCount = b.weeks.filter(isWeekPaid).length;
-      const remainingWeeks = plan.weeks - paidCount;
-      const remainingAmount = plan.total - calcReceived(b);
+    let renewingId = null;
+    let renewPlan = 5000; // default
 
-      const msg = `Renew loan for "${b.name}"?\n\n` +
+    function askRenew(id) {
+      renewingId = id;
+      const b = borrowers.find(x => x.id === id);
+      // Default the plan picker to the borrower's current plan (unless custom)
+      if (b && typeof b.plan === "number" && PLANS[b.plan]) {
+        renewPlan = b.plan;
+      } else {
+        renewPlan = 5000;
+      }
+      currentView = "renew";
+      render();
+    }
+
+    function selectRenewPlan(p) {
+      renewPlan = p;
+      render();
+    }
+
+    function cancelRenew() {
+      renewingId = null;
+      currentView = "detail";
+      render();
+    }
+
+    function confirmRenew() {
+      const id = renewingId;
+      const oldB = borrowers.find(x => x.id === id);
+      if (!oldB) { renewingId = null; return; }
+      const oldPlan = getPlan(oldB);
+      const paidCount = oldB.weeks.filter(isWeekPaid).length;
+      const remainingWeeks = oldPlan.weeks - paidCount;
+      const remainingAmount = oldPlan.total - calcReceived(oldB);
+      const newPlanObj = PLANS[renewPlan];
+
+      const msg = `Renew "${oldB.name}" with ₹${renewPlan.toLocaleString("en-IN")}/week plan?\n\n` +
         `This will:\n` +
-        `• Mark ${remainingWeeks} remaining week${remainingWeeks === 1 ? '' : 's'} (${'\u20B9'}${remainingAmount.toLocaleString("en-IN")}) as paid with today's date\n` +
+        `• Mark ${remainingWeeks} remaining week${remainingWeeks === 1 ? '' : 's'} (₹${remainingAmount.toLocaleString("en-IN")}) as paid with today's date\n` +
         `• Close the current loan and move it to Completed Archive\n` +
-        `• Start a fresh loan with the same name and plan\n` +
+        `• Start a fresh ${newPlanObj.weeks}-week loan (${'\u20B9'}${newPlanObj.total.toLocaleString("en-IN")} total, ${'\u20B9'}${newPlanObj.profit.toLocaleString("en-IN")} profit)\n` +
         `• Clear the comment so you can add new notes\n\n` +
         `Continue?`;
 
       if (!confirm(msg)) return;
-      renewBorrower(id);
+      renewBorrower(id, renewPlan);
     }
 
-    function renewBorrower(id) {
+    function renewBorrower(id, newPlanKey) {
       const oldB = borrowers.find(x => x.id === id);
       if (!oldB) return;
-      const plan = getPlan(oldB);
       const todayIso = new Date().toISOString();
 
       // Step 1: Close the current loan by marking all unpaid weeks as paid today
@@ -941,21 +969,21 @@
         return { paid: true, date: todayIso };
       });
 
-      // Step 2: Create a fresh borrower with the same name and plan
+      // Step 2: Create a fresh borrower with the same name but potentially different plan
+      const newPlanObj = PLANS[newPlanKey];
       const newBorrower = {
         id: Date.now().toString(),
         name: oldB.name,
-        plan: oldB.plan,
-        weeks: Array(plan.weeks).fill(null).map(() => ({ paid: false, date: null })),
+        plan: newPlanKey,
+        weeks: Array(newPlanObj.weeks).fill(null).map(() => ({ paid: false, date: null })),
         createdAt: todayIso,
         // Comment intentionally omitted (empty) so user can enter new notes
       };
-      if (oldB.customPlan) newBorrower.customPlan = oldB.customPlan;
 
       borrowers.push(newBorrower);
       saveData();
 
-      // Navigate to the new borrower's detail page
+      renewingId = null;
       selectedId = newBorrower.id;
       currentView = "detail";
       confirmDeleteId = null;
@@ -1248,6 +1276,7 @@
       if (currentView === "pin-setup") return renderPinSetup(app);
       if (currentView === "pin-unblur") return renderPinUnblur(app);
       if (currentView === "detail") return renderDetail(app);
+      if (currentView === "renew") return renderRenew(app);
       if (currentView === "add") return renderAdd(app);
       if (currentView === "menu") return renderMenu(app);
       if (currentView === "summary") return renderSummary(app);
@@ -2964,6 +2993,68 @@
         }
       }
       html += `</div></div>`;
+
+      app.innerHTML = html;
+    }
+
+    function renderRenew(app) {
+      const b = borrowers.find(x => x.id === renewingId);
+      if (!b) { renewingId = null; currentView = "home"; render(); return; }
+      const currentPlan = getPlan(b);
+      const paidCount = b.weeks.filter(isWeekPaid).length;
+      const remainingWeeks = currentPlan.weeks - paidCount;
+      const remainingAmount = currentPlan.total - calcReceived(b);
+      const newPlanObj = PLANS[renewPlan];
+
+      // Build plan options (built-in plans only)
+      const planKeys = [10000, 5000, 3500];
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="cancelRenew()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Renew Loan</h2>
+              <span style="font-size:13px;color:var(--text-dim)">${b.name}</span>
+            </div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:20px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Current loan will be closed</div>
+            <div style="font-size:13px;color:var(--text);line-height:1.5">
+              ${remainingWeeks} remaining week${remainingWeeks === 1 ? '' : 's'} (${fmt(remainingAmount)}) will be marked paid with today's date, then moved to the Completed Archive.
+            </div>
+          </div>
+
+          <div style="font-size:13px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px">Choose new plan</div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:20px">`;
+
+      planKeys.forEach(key => {
+        const p = PLANS[key];
+        const isSelected = renewPlan === key;
+        html += `
+            <div onclick="selectRenewPlan(${key})" style="background:${isSelected ? 'rgba(34,211,167,0.12)' : 'var(--card)'};border:${isSelected ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week</div>
+                <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600">${p.weeks} weeks</div>
+              </div>
+              <div style="font-size:11px;color:var(--text-dim)">
+                Lent ${fmt(p.principal)} · Total ${fmt(p.total)} · Profit ${fmt(p.profit)}
+              </div>
+            </div>`;
+      });
+
+      html += `
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:20px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">New loan will be</div>
+            <div class="mono" style="font-size:16px;font-weight:700;color:var(--accent)">${fmt(newPlanObj.principal)} lent · ${newPlanObj.weeks} weeks</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Starts today · Comment will be cleared</div>
+          </div>
+
+          <button class="primary-btn" onclick="confirmRenew()">Renew with ${fmt(newPlanObj.weekly)}/week plan</button>
+        </div>`;
 
       app.innerHTML = html;
     }
