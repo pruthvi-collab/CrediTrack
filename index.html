@@ -968,6 +968,8 @@
         if (isWeekPaid(w)) return w;
         return { paid: true, date: todayIso };
       });
+      // Tag old loan as renewed so Archive can show a renewed indicator
+      oldB.renewed = true;
 
       // Step 2: Create a fresh borrower with the same name but potentially different plan
       const newPlanObj = PLANS[newPlanKey];
@@ -1788,7 +1790,10 @@
             <div class="card" onclick="goDetail('${b.id}')">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
                 <div>
-                  <div style="font-size:16px;font-weight:600">${b.name}</div>
+                  <div style="font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    ${b.name}
+                    ${b.renewed ? `<span title="Renewed" style="font-size:11px;background:rgba(34,211,167,0.15);color:var(--accent);padding:2px 8px;border-radius:20px;font-weight:600;display:inline-flex;align-items:center;gap:4px">🔄 Renewed</span>` : ''}
+                  </div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${plan.weeks} weeks</div>
                   <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cr: ${fmtShortDate(b.createdAt)} · Comp: ${fmtShortDate(completionIso)}</div>
                 </div>
