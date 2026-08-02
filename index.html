@@ -228,23 +228,10 @@
     }
 
     // Get amount for a specific week of a borrower (uses custom plan if set)
-    // For skipped weeks, this returns 0 (no payment expected in that slot).
-    // For non-skipped weeks with weeklyAmounts arrays, we map by "position among non-skipped weeks"
-    // so that if Week 8 is skipped and we appended a new week at the end, the final position
-    // still uses the special final amount (e.g., ₹4,500 for the 3,500 plan).
     function getBorrowerWeekAmount(b, weekIdx) {
       const p = getPlan(b);
       if (!p) return 0;
-      // Skipped weeks have no expected amount
-      if (isWeekSkipped(b.weeks[weekIdx])) return 0;
-      if (p.weeklyAmounts) {
-        // Count how many non-skipped weeks precede this one (0-indexed position in the plan)
-        let planPos = 0;
-        for (let i = 0; i < weekIdx; i++) {
-          if (!isWeekSkipped(b.weeks[i])) planPos++;
-        }
-        return p.weeklyAmounts[planPos] !== undefined ? p.weeklyAmounts[planPos] : p.weekly;
-      }
+      if (p.weeklyAmounts) return p.weeklyAmounts[weekIdx] !== undefined ? p.weeklyAmounts[weekIdx] : p.weekly;
       return p.weekly;
     }
 
@@ -277,16 +264,16 @@
       // Need Week 1 to be paid to start the clock
       if (!isWeekPaid(firstWeek)) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
 
-      // Find first unpaid AND non-skipped week
-      const nextIdx = b.weeks.findIndex(w => !isWeekPaid(w) && !isWeekSkipped(w));
+      // Find first unpaid week
+      const nextIdx = b.weeks.findIndex(w => !isWeekPaid(w));
       if (nextIdx === -1) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
 
-      // Expected date = Week 1 date + (nextIdx + skippedBefore) * 7 days
-      // Each skipped week shifts the schedule forward by 7 days
-      const skippedBefore = countSkippedBefore(b.weeks, nextIdx);
+      // Expected date = Week 1 date + (nextIdx + skipCount) * 7 days
+      // skipCount represents how many weeks the schedule has been paused/shifted
+      const skipCount = getSkipCount(b);
       const week1Date = new Date(getWeekDate(firstWeek));
       const expectedDate = new Date(week1Date);
-      expectedDate.setDate(week1Date.getDate() + (nextIdx + skippedBefore) * 7);
+      expectedDate.setDate(week1Date.getDate() + (nextIdx + skipCount) * 7);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -520,12 +507,9 @@
     }
     function isWeekPaid(w) { return typeof w === "boolean" ? w : w?.paid; }
     function getWeekDate(w) { return typeof w === "boolean" ? null : w?.date; }
-    function isWeekSkipped(w) { return typeof w === "boolean" ? false : !!w?.skipped; }
-    // Count skipped weeks before a given index (used to shift schedule dates)
-    function countSkippedBefore(weeks, idx) {
-      let n = 0;
-      for (let i = 0; i < idx; i++) if (isWeekSkipped(weeks[i])) n++;
-      return n;
+    // Get the schedule shift (how many weeks the whole schedule has been paused)
+    function getSkipCount(b) {
+      return b.skipCount || 0;
     }
     function getSelected() { return borrowers.find(b => b.id === selectedId); }
 
@@ -617,37 +601,31 @@
       const b = borrowers.find(x => x.id === borrowerId);
       if (!b) return;
       const current = b.weeks[weekIdx];
-      // If skipped, tapping the checkbox does nothing — user needs to unskip first
-      if (isWeekSkipped(current)) return;
       const isPaid = isWeekPaid(current);
       b.weeks[weekIdx] = isPaid ? { paid: false, date: null } : { paid: true, date: new Date().toISOString() };
       saveData();
       render();
     }
 
-    function toggleSkipWeek(borrowerId, weekIdx, event) {
+    // Skip = pause the schedule by 1 week. All future unpaid weeks' expected dates
+    // shift forward by 7 days. No week is renumbered. Borrower still owes the full plan amount.
+    function skipOneWeek(borrowerId, event) {
       if (event) event.stopPropagation();
       const b = borrowers.find(x => x.id === borrowerId);
       if (!b) return;
-      const current = b.weeks[weekIdx];
-      // Can't skip a paid week — must unpay first
-      if (isWeekPaid(current)) {
-        alert("This week is already marked paid. Untick it first if you want to skip.");
-        return;
-      }
-      if (isWeekSkipped(current)) {
-        // Un-skip: restore to normal unpaid state and remove the extra week we added
-        b.weeks[weekIdx] = { paid: false, date: null };
-        // Remove the last week we appended (only if it's unpaid — safety check)
-        const lastIdx = b.weeks.length - 1;
-        if (lastIdx > weekIdx && !isWeekPaid(b.weeks[lastIdx]) && !isWeekSkipped(b.weeks[lastIdx])) {
-          b.weeks.pop();
-        }
-      } else {
-        b.weeks[weekIdx] = { paid: false, date: null, skipped: true };
-        // Append a new week at the end so the borrower still owes the same total number of payments
-        b.weeks.push({ paid: false, date: null });
-      }
+      if (!confirm(`Pause ${b.name}'s schedule by 1 week?\n\nThe next expected payment will shift forward by 7 days. No week gets renumbered.`)) return;
+      b.skipCount = (b.skipCount || 0) + 1;
+      saveData();
+      render();
+    }
+
+    function undoOneSkip(borrowerId, event) {
+      if (event) event.stopPropagation();
+      const b = borrowers.find(x => x.id === borrowerId);
+      if (!b) return;
+      if (!b.skipCount || b.skipCount <= 0) return;
+      b.skipCount -= 1;
+      if (b.skipCount === 0) delete b.skipCount;
       saveData();
       render();
     }
@@ -656,8 +634,8 @@
       if (event) event.stopPropagation();
       const b = borrowers.find(x => x.id === borrowerId);
       if (!b) return;
-      // Find first unpaid AND non-skipped week
-      const idx = b.weeks.findIndex(w => !isWeekPaid(w) && !isWeekSkipped(w));
+      // Find first unpaid week
+      const idx = b.weeks.findIndex(w => !isWeekPaid(w));
       if (idx === -1) return;
       b.weeks[idx] = { paid: true, date: new Date().toISOString() };
       saveData();
@@ -3005,29 +2983,23 @@
           </div>
 
           <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden">
-            <div style="padding:14px 16px;border-bottom:1px solid var(--border)">
-              <span style="font-size:14px;font-weight:600">Weekly Payments</span>
+            <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-size:14px;font-weight:600">Weekly Payments</span>
+                ${getSkipCount(b) > 0 ? `<span style="font-size:11px;color:var(--warn)">⏸ Schedule paused by ${getSkipCount(b)} week${getSkipCount(b) === 1 ? '' : 's'}</span>` : ''}
+              </div>
+              <div style="display:flex;gap:6px">
+                ${getSkipCount(b) > 0 ? `<button onclick="undoOneSkip('${b.id}',event)" title="Undo last skip" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif">↶ Undo skip</button>` : ''}
+                <button onclick="skipOneWeek('${b.id}',event)" title="Pause schedule by 1 week" style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--warn);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">⏭ Skip 1 week</button>
+              </div>
             </div>`;
 
       b.weeks.forEach((weekData, i) => {
         const checked = isWeekPaid(weekData);
-        const skipped = isWeekSkipped(weekData);
         const paidDate = getWeekDate(weekData);
         const weekAmt = getBorrowerWeekAmount(b, i);
         const borderBot = i < b.weeks.length - 1 ? "border-bottom:1px solid var(--border);" : "";
-
-        if (skipped) {
-          html += `
-            <div class="week-row" style="${borderBot}opacity:0.5">
-              <div class="checkbox" style="background:var(--card-alt);color:var(--text-dim);border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;font-size:14px">⏭</div>
-              <div style="flex:1">
-                <span style="font-size:15px;color:var(--text-dim);font-weight:400;display:block;text-decoration:line-through">Week ${i + 1}</span>
-                <div style="font-size:11px;color:var(--warn);margin-top:4px">Skipped · schedule shifted +7 days</div>
-              </div>
-              <button onclick="toggleSkipWeek('${b.id}',${i},event)" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif">Undo</button>
-            </div>`;
-        } else {
-          html += `
+        html += `
             <div class="week-row ${checked ? 'checked' : ''}" style="${borderBot}">
               <div class="checkbox ${checked ? 'on' : 'off'}" onclick="toggleWeek('${b.id}',${i})">${checked ? '<span style="color:var(--fab-text);font-size:14px;font-weight:700">✓</span>' : ''}</div>
               <div style="flex:1" onclick="toggleWeek('${b.id}',${i})">
@@ -3039,12 +3011,8 @@
                      </div>`
                   : ''}
               </div>
-              ${!checked
-                ? `<button onclick="toggleSkipWeek('${b.id}',${i},event)" title="Skip this week" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif;margin-right:6px">Skip</button>`
-                : ''}
               <span class="mono" style="font-size:14px;color:${checked ? 'var(--accent)' : 'var(--text-dim)'};font-weight:500" onclick="toggleWeek('${b.id}',${i})">${fmt(weekAmt)}</span>
             </div>`;
-        }
       });
 
       html += `</div>`;
