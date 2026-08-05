@@ -196,6 +196,7 @@
     const PLANS = {
       10000: { principal: 130000, weekly: 10000, weeks: 15, total: 150000, profit: 20000, weeklyAmounts: null },
       5000:  { principal: 65000,  weekly: 5000,  weeks: 15, total: 75000,  profit: 10000, weeklyAmounts: null },
+      "5000_10": { principal: 42500,  weekly: 5000,  weeks: 10, total: 50000,  profit: 7500,  weeklyAmounts: null },
       3500:  { principal: 42500,  weekly: 3500,  weeks: 14, total: 50000,  profit: 7500,  weeklyAmounts: [3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,4500] },
     };
 
@@ -819,7 +820,13 @@
     function goMenu() { currentView = "menu"; render(); }
 
     function selectPlan(p) {
-      newPlan = p === "custom" ? "custom" : Number(p);
+      if (p === "custom") {
+        newPlan = "custom";
+      } else {
+        // If p looks numeric, store as number; else keep string (for keys like "5000_10")
+        const asNum = Number(p);
+        newPlan = (!isNaN(asNum) && String(asNum) === String(p)) ? asNum : p;
+      }
       render();
       setTimeout(() => { const el = document.getElementById("nameInput"); if (el) el.focus(); }, 50);
     }
@@ -945,7 +952,7 @@
       renewingId = id;
       const b = borrowers.find(x => x.id === id);
       // Default the plan picker to the borrower's current plan (unless custom)
-      if (b && typeof b.plan === "number" && PLANS[b.plan]) {
+      if (b && PLANS[b.plan]) {
         renewPlan = b.plan;
       } else {
         renewPlan = 5000;
@@ -955,7 +962,9 @@
     }
 
     function selectRenewPlan(p) {
-      renewPlan = p;
+      // Accept both string and numeric keys — normalize numeric strings to numbers
+      const asNum = Number(p);
+      renewPlan = (!isNaN(asNum) && String(asNum) === String(p)) ? asNum : p;
       render();
     }
 
@@ -975,7 +984,7 @@
       const remainingAmount = oldPlan.total - calcReceived(oldB);
       const newPlanObj = PLANS[renewPlan];
 
-      const msg = `Renew "${oldB.name}" with ₹${renewPlan.toLocaleString("en-IN")}/week plan?\n\n` +
+      const msg = `Renew "${oldB.name}" with ₹${newPlanObj.weekly.toLocaleString("en-IN")}/week plan?\n\n` +
         `This will:\n` +
         `• Mark ${remainingWeeks} remaining week${remainingWeeks === 1 ? '' : 's'} (₹${remainingAmount.toLocaleString("en-IN")}) as paid with today's date\n` +
         `• Close the current loan and move it to Completed Archive\n` +
@@ -2012,7 +2021,8 @@
       // Collect per-plan stats from standard plans
       const planRates = [
         { key: "10000", label: "₹10,000/week", plan: PLANS[10000] },
-        { key: "5000",  label: "₹5,000/week",  plan: PLANS[5000] },
+        { key: "5000",  label: "₹5,000/week × 15w",  plan: PLANS[5000] },
+        { key: "5000_10", label: "₹5,000/week × 10w (Short)",  plan: PLANS["5000_10"] },
         { key: "3500",  label: "₹3,500/week",  plan: PLANS[3500] },
       ].map(p => ({ ...p, roi: getMonthlyROI(p.plan) }));
 
@@ -2877,11 +2887,6 @@
 
       if (borrowers.length > 0) {
         html += `
-          <div class="stat-card" style="padding:16px 18px;text-align:left;margin-bottom:16px">
-            <div class="stat-label" style="margin-bottom:6px">Total Pending</div>
-            <div class="stat-value" style="color:var(--warn);font-size:28px">${fmt(totalPending)}</div>
-          </div>
-
           <div style="margin-bottom:12px">
             <input id="searchInput" type="text" placeholder="🔍 Search borrowers..." value="${searchQuery.replace(/"/g,'&quot;')}" oninput="setSearch(this.value)" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 14px;font-size:14px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box" />
           </div>
@@ -3048,7 +3053,7 @@
       const newPlanObj = PLANS[renewPlan];
 
       // Build plan options (built-in plans only)
-      const planKeys = [10000, 5000, 3500];
+      const planKeys = [10000, 5000, "5000_10", 3500];
 
       let html = `
         <div class="fade-in">
@@ -3072,11 +3077,12 @@
 
       planKeys.forEach(key => {
         const p = PLANS[key];
-        const isSelected = renewPlan === key;
+        const isSelected = String(renewPlan) === String(key);
+        const isShortVariant = key === "5000_10";
         html += `
-            <div onclick="selectRenewPlan(${key})" style="background:${isSelected ? 'rgba(34,211,167,0.12)' : 'var(--card)'};border:${isSelected ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s">
+            <div onclick="selectRenewPlan('${key}')" style="background:${isSelected ? 'rgba(34,211,167,0.12)' : 'var(--card)'};border:${isSelected ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week</div>
+                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week${isShortVariant ? ' (Short)' : ''}</div>
                 <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600">${p.weeks} weeks</div>
               </div>
               <div style="font-size:11px;color:var(--text-dim)">
@@ -3120,18 +3126,21 @@
 
       planKeys.forEach(key => {
         const plan = PLANS[key];
-        const isActive = newPlan === Number(key);
+        // Compare as string to handle keys like "5000_10"
+        const isActive = String(newPlan) === String(key);
+        // Nicer plan label — for the 5000_10 variant, show something distinct
+        const shortLabel = key === "5000_10" ? "₹5,000 × 10 weeks (Short)" : `${fmt(plan.weekly)}<span style="font-size:13px;font-weight:400;color:var(--text-dim)">/week</span>`;
         html += `
-              <div class="plan-option ${isActive ? 'active' : 'inactive'}" onclick="selectPlan(${key})">
+              <div class="plan-option ${isActive ? 'active' : 'inactive'}" onclick="selectPlan('${key}')">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                  <span class="mono" style="font-size:18px;font-weight:700;color:${isActive ? 'var(--accent)' : 'var(--text)'}">
-                    ${fmt(plan.weekly)}<span style="font-size:13px;font-weight:400;color:var(--text-dim)">/week</span>
+                  <span class="mono" style="font-size:${key === "5000_10" ? '15' : '18'}px;font-weight:700;color:${isActive ? 'var(--accent)' : 'var(--text)'}">
+                    ${shortLabel}
                   </span>
                   <div style="width:22px;height:22px;border-radius:50%;${isActive ? 'background:var(--accent)' : 'border:2px solid var(--text-dim)'};display:flex;align-items:center;justify-content:center">
                     ${isActive ? '<span style="color:var(--fab-text);font-size:12px;font-weight:700">✓</span>' : ''}
                   </div>
                 </div>
-                <div style="font-size:13px;color:var(--text-dim)">Loan: ${fmt(plan.principal)} · ${plan.weeks} weeks</div>
+                <div style="font-size:13px;color:var(--text-dim)">Loan: ${fmt(plan.principal)} · ${plan.weeks} weeks · Total ${fmt(plan.total)}</div>
               </div>`;
       });
 
