@@ -313,6 +313,41 @@
     let customWeeks = "";
     let customFinalWeekly = "";
     let hideAmounts = false;
+    // Bulk selection state
+    let selectionMode = false;
+    let selectedIds = new Set();
+    function toggleSelectionMode() {
+      selectionMode = !selectionMode;
+      if (!selectionMode) selectedIds.clear();
+      render();
+    }
+    function toggleSelect(id, event) {
+      if (event) event.stopPropagation();
+      if (selectedIds.has(id)) selectedIds.delete(id);
+      else selectedIds.add(id);
+      render();
+    }
+    function clearSelection() {
+      selectedIds.clear();
+      render();
+    }
+    function markSelectedPaid() {
+      if (selectedIds.size === 0) return;
+      const nowIso = new Date().toISOString();
+      let count = 0;
+      selectedIds.forEach(id => {
+        const b = borrowers.find(x => x.id === id);
+        if (!b) return;
+        const idx = b.weeks.findIndex(w => !isWeekPaid(w));
+        if (idx === -1) return; // already complete
+        b.weeks[idx] = { paid: true, date: nowIso };
+        count++;
+      });
+      saveData();
+      selectedIds.clear();
+      selectionMode = false;
+      render();
+    }
 
     // ===== STORAGE =====
     function loadData() {
@@ -2831,8 +2866,20 @@
         const expectedEnd = new Date(anchorIso);
         expectedEnd.setUTCDate(expectedEnd.getUTCDate() + plan.weeks * 7);
 
+        const isSelected = selectionMode && selectedIds.has(b.id);
+        const cardClick = selectionMode ? `toggleSelect('${b.id}',event)` : `goDetail('${b.id}')`;
+        const cardBorder = isSelected
+          ? 'border:2px solid var(--accent)'
+          : (overdue.overdue ? 'border:1px solid var(--danger)' : '');
+
         html += `
-          <div class="card" onclick="goDetail('${b.id}')" style="${overdue.overdue ? 'border:1px solid var(--danger)' : ''}">
+          <div class="card" onclick="${cardClick}" style="${cardBorder};${selectionMode ? 'display:flex;align-items:center;gap:12px' : ''}">
+            ${selectionMode ? `
+              <div style="width:26px;height:26px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;${isSelected ? 'background:var(--accent);' : 'background:transparent;border:2px solid var(--border);'}">
+                ${isSelected ? '<span style="color:var(--fab-text);font-size:15px;font-weight:700">✓</span>' : ''}
+              </div>
+              <div style="flex:1;min-width:0">
+            ` : ''}
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px">
               <div>
                 <div style="font-size:16px;font-weight:600;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -2853,10 +2900,11 @@
             <div style="display:flex;align-items:center;gap:10px">
               <div style="flex:1" class="progress-bar" style="height:6px"><div style="height:6px"><div class="progress-fill" style="width:${progress}%;${isComplete ? 'background:var(--success)' : ''}"></div></div></div>
               <span class="mono" style="font-size:12px;color:var(--success);font-weight:500;min-width:70px;text-align:right">${fmt(received)}</span>
-              ${!isComplete
+              ${!isComplete && !selectionMode
                 ? `<button onclick="quickTick('${b.id}',event)" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap">+ W${paid + 1}</button>`
                 : ''}
             </div>
+            ${selectionMode ? `</div>` : ''}
           </div>`;
       });
       html += `</div>`;
@@ -2874,14 +2922,18 @@
       let html = `
         <div class="fade-in">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
-            <h1 style="font-size:26px;font-weight:700;letter-spacing:-0.5px">CrediTrack</h1>
+            <h1 style="font-size:26px;font-weight:700;letter-spacing:-0.5px">${selectionMode ? `${selectedIds.size} selected` : 'CrediTrack'}</h1>
             <div style="display:flex;gap:8px">
+              ${selectionMode
+                ? `<button onclick="toggleSelectionMode()" style="background:var(--accent);border:none;color:var(--fab-text);height:42px;padding:0 16px;border-radius:12px;cursor:pointer;font-size:14px;font-weight:600;font-family:'DM Sans',sans-serif">Done</button>`
+                : `
+              <button onclick="toggleSelectionMode()" title="Select multiple borrowers" style="background:var(--card-alt);border:none;color:var(--text);height:42px;padding:0 12px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif">Select</button>
               <button onclick="toggleHideAmounts()" title="Hide/show amounts" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px">${hideAmounts ? '🙈' : '👁️'}</button>
               <button onclick="goMenu()" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:3px">
                 <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
                 <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
                 <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
-              </button>
+              </button>`}
             </div>
           </div>`;
 
@@ -2909,8 +2961,35 @@
         html += `<div id="borrowerList">${renderBorrowerList()}</div>`;
       }
 
-      html += `<button class="fab" onclick="goAdd()">+ Add Borrower</button>
-        </div>`;
+      // Bottom action area — either the multi-select bar (when items selected) or the Add button
+      if (selectionMode && selectedIds.size > 0) {
+        // Compute sum of NEXT unpaid week amount for each selected borrower
+        let sumAmount = 0;
+        let readyCount = 0;
+        selectedIds.forEach(id => {
+          const bb = borrowers.find(x => x.id === id);
+          if (!bb) return;
+          const idx = bb.weeks.findIndex(w => !isWeekPaid(w));
+          if (idx === -1) return; // already fully paid, skipped
+          sumAmount += getBorrowerWeekAmount(bb, idx);
+          readyCount++;
+        });
+        html += `
+          <div style="position:fixed;bottom:16px;left:16px;right:16px;max-width:448px;margin:0 auto;background:var(--card);border:1px solid var(--accent);border-radius:14px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:100">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <div>
+                <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Next week's collection</div>
+                <div class="mono" style="font-size:22px;font-weight:700;color:var(--accent);margin-top:2px">${fmt(sumAmount)}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${readyCount} of ${selectedIds.size} ready to mark paid</div>
+              </div>
+              <button onclick="clearSelection()" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif">Clear</button>
+            </div>
+            <button onclick="markSelectedPaid()" style="width:100%;background:var(--accent);color:var(--fab-text);border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif" ${readyCount === 0 ? 'disabled style="opacity:0.5"' : ''}>Mark ${readyCount} borrower${readyCount === 1 ? '' : 's'} paid today</button>
+          </div>`;
+      } else if (!selectionMode) {
+        html += `<button class="fab" onclick="goAdd()">+ Add Borrower</button>`;
+      }
+      html += `</div>`;
       app.innerHTML = html;
     }
 
