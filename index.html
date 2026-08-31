@@ -194,6 +194,7 @@
     // ===== DATA & STATE =====
     // principal = amount lent, total = amount collected from weekly payments, profit = total - principal
     const PLANS = {
+      "20000_10": { principal: 170000, weekly: 20000, weeks: 10, total: 200000, profit: 30000, weeklyAmounts: null },
       10000: { principal: 130000, weekly: 10000, weeks: 15, total: 150000, profit: 20000, weeklyAmounts: null },
       "10000_10": { principal: 85000, weekly: 10000, weeks: 10, total: 100000, profit: 15000, weeklyAmounts: null },
       5000:  { principal: 65000,  weekly: 5000,  weeks: 15, total: 75000,  profit: 10000, weeklyAmounts: null },
@@ -390,18 +391,36 @@
     }
 
     // ===== IDLE AUTO-LOCK =====
-    function resetIdleTimer() {
-      if (idleTimer) clearTimeout(idleTimer);
-      // Only arm the timer if a PIN is set and the app is currently unlocked
+    // We track a `lastActivityAt` timestamp instead of relying purely on setTimeout,
+    // because setTimeout can be throttled/cleared by the OS in mobile browsers.
+    // A 30s polling interval checks staleness independently as a safety net.
+    let lastActivityAt = Date.now();
+    let idlePollInterval = null;
+
+    function markActivity() {
+      lastActivityAt = Date.now();
+    }
+
+    function checkIdleAndLock() {
       if (!hasPIN() || appLocked) return;
-      idleTimer = setTimeout(() => {
+      if (document.hidden) return; // visibilitychange handler covers this case
+      const elapsed = Date.now() - lastActivityAt;
+      if (elapsed >= IDLE_LOCK_MS) {
         appLocked = true;
         pinInput = "";
         pinError = "";
         pinStage = "enter";
         currentView = "home";
         render();
-      }, IDLE_LOCK_MS);
+      }
+    }
+
+    function resetIdleTimer() {
+      markActivity();
+      if (idleTimer) clearTimeout(idleTimer);
+      // Only arm the timer if a PIN is set and the app is currently unlocked
+      if (!hasPIN() || appLocked) return;
+      idleTimer = setTimeout(checkIdleAndLock, IDLE_LOCK_MS + 500);
     }
     function clearIdleTimer() {
       if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
@@ -987,20 +1006,29 @@
     function askRenew(id) {
       renewingId = id;
       const b = borrowers.find(x => x.id === id);
-      // Default the plan picker to the borrower's current plan (unless custom)
+      // Default the plan picker to the borrower's current plan (if it's a built-in)
       if (b && PLANS[b.plan]) {
         renewPlan = b.plan;
       } else {
         renewPlan = 5000;
       }
+      // Reset custom fields when opening the renew screen so old input doesn't leak in
+      customPrincipal = "";
+      customWeekly = "";
+      customWeeks = "";
+      customFinalWeekly = "";
       currentView = "renew";
       render();
     }
 
     function selectRenewPlan(p) {
-      // Accept both string and numeric keys — normalize numeric strings to numbers
-      const asNum = Number(p);
-      renewPlan = (!isNaN(asNum) && String(asNum) === String(p)) ? asNum : p;
+      if (p === "custom") {
+        renewPlan = "custom";
+      } else {
+        // Accept both string and numeric keys — normalize numeric strings to numbers
+        const asNum = Number(p);
+        renewPlan = (!isNaN(asNum) && String(asNum) === String(p)) ? asNum : p;
+      }
       render();
     }
 
@@ -1018,7 +1046,26 @@
       const paidCount = oldB.weeks.filter(isWeekPaid).length;
       const remainingWeeks = oldPlan.weeks - paidCount;
       const remainingAmount = oldPlan.total - calcReceived(oldB);
-      const newPlanObj = PLANS[renewPlan];
+
+      // Build the effective new plan object (either from PLANS or from custom fields)
+      let newPlanObj;
+      let customPlanForBorrower = null;
+      if (renewPlan === "custom") {
+        const cp = parseInt(customPrincipal, 10) || 0;
+        const cw = parseInt(customWeekly, 10) || 0;
+        const cn = parseInt(customWeeks, 10) || 0;
+        const cf = parseInt(customFinalWeekly, 10) || 0;
+        if (cp <= 0 || cw <= 0 || cn <= 0) {
+          alert("Please fill in principal, weekly amount, and number of weeks for the custom plan.");
+          return;
+        }
+        const weeklyAmounts = cf > 0 ? Array(cn - 1).fill(cw).concat([cf]) : null;
+        const total = weeklyAmounts ? weeklyAmounts.reduce((a, x) => a + x, 0) : cw * cn;
+        newPlanObj = { principal: cp, weekly: cw, weeks: cn, total, profit: total - cp, weeklyAmounts };
+        customPlanForBorrower = newPlanObj;
+      } else {
+        newPlanObj = PLANS[renewPlan];
+      }
 
       const msg = `Renew "${oldB.name}" with ₹${newPlanObj.weekly.toLocaleString("en-IN")}/week plan?\n\n` +
         `This will:\n` +
@@ -1029,10 +1076,10 @@
         `Continue?`;
 
       if (!confirm(msg)) return;
-      renewBorrower(id, renewPlan);
+      renewBorrower(id, renewPlan, customPlanForBorrower);
     }
 
-    function renewBorrower(id, newPlanKey) {
+    function renewBorrower(id, newPlanKey, customPlanObj) {
       const oldB = borrowers.find(x => x.id === id);
       if (!oldB) return;
       const todayIso = new Date().toISOString();
@@ -1045,19 +1092,25 @@
       // Tag old loan as renewed so Archive can show a renewed indicator
       oldB.renewed = true;
 
-      // Step 2: Create a fresh borrower with the same name but potentially different plan
-      const newPlanObj = PLANS[newPlanKey];
+      // Step 2: Create a fresh borrower — either with a built-in plan or a custom plan
+      const newPlanObj = customPlanObj || PLANS[newPlanKey];
       const newBorrower = {
         id: Date.now().toString(),
         name: oldB.name,
-        plan: newPlanKey,
+        plan: customPlanObj ? "custom" : newPlanKey,
         weeks: Array(newPlanObj.weeks).fill(null).map(() => ({ paid: false, date: null })),
         createdAt: todayIso,
-        // Comment intentionally omitted (empty) so user can enter new notes
       };
+      if (customPlanObj) newBorrower.customPlan = customPlanObj;
 
       borrowers.push(newBorrower);
       saveData();
+
+      // Reset custom fields for future use
+      customPrincipal = "";
+      customWeekly = "";
+      customWeeks = "";
+      customFinalWeekly = "";
 
       renewingId = null;
       selectedId = newBorrower.id;
@@ -2056,6 +2109,7 @@
     function renderRates(app) {
       // Collect per-plan stats from standard plans
       const planRates = [
+        { key: "20000_10", label: "₹20,000/week × 10 weeks", plan: PLANS["20000_10"] },
         { key: "10000", label: "₹10,000/week × 15w", plan: PLANS[10000] },
         { key: "10000_10", label: "₹10,000/week × 10 weeks", plan: PLANS["10000_10"] },
         { key: "5000",  label: "₹5,000/week × 15w",  plan: PLANS[5000] },
@@ -3131,10 +3185,26 @@
       const paidCount = b.weeks.filter(isWeekPaid).length;
       const remainingWeeks = currentPlan.weeks - paidCount;
       const remainingAmount = currentPlan.total - calcReceived(b);
-      const newPlanObj = PLANS[renewPlan];
 
-      // Build plan options (built-in plans only)
-      const planKeys = [10000, "10000_10", 5000, "5000_10", 3500];
+      // Determine whether custom plan is selected
+      const isCustomActive = renewPlan === "custom";
+      // Build effective "new plan" object for the summary + button label
+      let newPlanObj;
+      if (isCustomActive) {
+        const cp = parseInt(customPrincipal, 10) || 0;
+        const cw = parseInt(customWeekly, 10) || 0;
+        const cn = parseInt(customWeeks, 10) || 0;
+        const cf = parseInt(customFinalWeekly, 10) || 0;
+        // Total = sum of weeklyAmounts (or weekly × weeks if no final override)
+        const weeklyAmounts = cf > 0 && cn > 0 ? Array(cn - 1).fill(cw).concat([cf]) : null;
+        const total = weeklyAmounts ? weeklyAmounts.reduce((a, x) => a + x, 0) : cw * cn;
+        newPlanObj = { principal: cp, weekly: cw, weeks: cn, total, profit: total - cp, weeklyAmounts };
+      } else {
+        newPlanObj = PLANS[renewPlan];
+      }
+
+      // Built-in plan options
+      const planKeys = ["20000_10", 10000, "10000_10", 5000, "5000_10", 3500];
 
       let html = `
         <div class="fade-in">
@@ -3159,11 +3229,10 @@
       planKeys.forEach(key => {
         const p = PLANS[key];
         const isSelected = String(renewPlan) === String(key);
-        const isShortVariant = key === "5000_10" || key === "10000_10";
         html += `
             <div onclick="selectRenewPlan('${key}')" style="background:${isSelected ? 'rgba(34,211,167,0.12)' : 'var(--card)'};border:${isSelected ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week${isShortVariant ? '' : ''}</div>
+                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week</div>
                 <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600">${p.weeks} weeks</div>
               </div>
               <div style="font-size:11px;color:var(--text-dim)">
@@ -3172,16 +3241,54 @@
             </div>`;
       });
 
+      // Custom plan option
+      html += `
+            <div class="plan-option ${isCustomActive ? 'active' : 'inactive'}" onclick="${isCustomActive ? '' : `selectRenewPlan('custom')`}" style="background:${isCustomActive ? 'rgba(34,211,167,0.12)' : 'var(--card)'};border:${isCustomActive ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:12px;padding:14px 16px;cursor:${isCustomActive ? 'default' : 'pointer'};transition:all 0.15s">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${isCustomActive ? '12' : '4'}px">
+                <span style="font-size:15px;font-weight:600;color:${isCustomActive ? 'var(--accent)' : 'var(--text)'}">✨ Custom Plan</span>
+                <div style="width:20px;height:20px;border-radius:50%;${isCustomActive ? 'background:var(--accent)' : 'border:2px solid var(--text-dim)'};display:flex;align-items:center;justify-content:center">
+                  ${isCustomActive ? '<span style="color:var(--fab-text);font-size:11px;font-weight:700">✓</span>' : ''}
+                </div>
+              </div>
+              ${isCustomActive
+                ? `<div style="display:flex;flex-direction:column;gap:10px" onclick="event.stopPropagation()">
+                    <div>
+                      <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Principal (amount lent)</label>
+                      <input id="customPrincipalInput" type="number" inputmode="numeric" placeholder="e.g., 50000" value="${customPrincipal}" oninput="updateCustomField('principal',this.value)" class="input-field" style="padding:10px 12px;font-size:14px" />
+                    </div>
+                    <div style="display:flex;gap:10px">
+                      <div style="flex:1">
+                        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Weekly amount</label>
+                        <input id="customWeeklyInput" type="number" inputmode="numeric" placeholder="e.g., 5000" value="${customWeekly}" oninput="updateCustomField('weekly',this.value)" class="input-field" style="padding:10px 12px;font-size:14px" />
+                      </div>
+                      <div style="flex:1">
+                        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Weeks</label>
+                        <input id="customWeeksInput" type="number" inputmode="numeric" placeholder="e.g., 12" value="${customWeeks}" oninput="updateCustomField('weeks',this.value)" class="input-field" style="padding:10px 12px;font-size:14px" />
+                      </div>
+                    </div>
+                    <div>
+                      <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase;letter-spacing:1px">Final week amount <span style="text-transform:none;letter-spacing:0">(optional)</span></label>
+                      <input id="customFinalWeeklyInput" type="number" inputmode="numeric" placeholder="Leave empty if same as weekly" value="${customFinalWeekly}" oninput="updateCustomField('finalWeekly',this.value)" class="input-field" style="padding:10px 12px;font-size:14px" />
+                    </div>
+                  </div>`
+                : `<div style="font-size:11px;color:var(--text-dim)">Set your own principal, weekly amount, and weeks</div>`
+              }
+            </div>`;
+
+      // Summary card + confirm button
+      const summaryTotal = newPlanObj.total || 0;
+      const summaryProfit = newPlanObj.profit || 0;
+      const summaryReady = newPlanObj.principal > 0 && newPlanObj.weekly > 0 && newPlanObj.weeks > 0;
       html += `
           </div>
 
           <div style="background:var(--card-alt);border-radius:12px;padding:14px;margin-bottom:20px">
             <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">New loan will be</div>
-            <div class="mono" style="font-size:16px;font-weight:700;color:var(--accent)">${fmt(newPlanObj.principal)} lent · ${newPlanObj.weeks} weeks</div>
-            <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Starts today · Comment will be cleared</div>
+            <div class="mono" style="font-size:16px;font-weight:700;color:var(--accent)">${fmt(newPlanObj.principal)} lent · ${newPlanObj.weeks || 0} weeks</div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Total ${fmt(summaryTotal)} · Profit ${fmt(summaryProfit)} · Comment will be cleared</div>
           </div>
 
-          <button class="primary-btn" onclick="confirmRenew()">Renew with ${fmt(newPlanObj.weekly)}/week plan</button>
+          <button class="primary-btn" onclick="confirmRenew()" ${!summaryReady ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''}>Renew with ${fmt(newPlanObj.weekly || 0)}/week plan</button>
         </div>`;
 
       app.innerHTML = html;
@@ -3210,7 +3317,7 @@
         // Compare as string to handle keys like "5000_10"
         const isActive = String(newPlan) === String(key);
         // Nicer plan label — for the short variants, show a distinct label
-        const isShortVariant = key === "5000_10" || key === "10000_10";
+        const isShortVariant = key === "5000_10" || key === "10000_10" || key === "20000_10";
         const shortLabel = isShortVariant
           ? `${fmt(plan.weekly)} × 10 weeks`
           : `${fmt(plan.weekly)}<span style="font-size:13px;font-weight:400;color:var(--text-dim)">/week</span>`;
@@ -3291,9 +3398,15 @@
     document.getElementById("importFileInput").addEventListener("change", importData);
 
     // Auto-lock after inactivity
-    ["click","touchstart","keydown","mousemove","scroll"].forEach(ev => {
+    // Only listen to intentional user events, not noisy ones like mousemove/scroll
+    // which can fire during passive interactions and never let the timer expire.
+    ["click", "touchstart", "keydown"].forEach(ev => {
       document.addEventListener(ev, resetIdleTimer, { passive: true });
     });
+    // Safety-net poller: even if the setTimeout is throttled by the OS, this checks
+    // staleness every 30 seconds and locks if the app has actually been idle.
+    idlePollInterval = setInterval(checkIdleAndLock, 30 * 1000);
+
     // Track when the app was last hidden, and re-lock on resume if too much time passed
     let lastHiddenAt = 0;
     document.addEventListener("visibilitychange", () => {
@@ -3317,6 +3430,9 @@
           }
         }
         lastHiddenAt = 0;
+        // Also check idle: if we were hidden for less than lock threshold but activity
+        // has staled overall, still lock
+        checkIdleAndLock();
         resetIdleTimer();
         runAutoBackupIfDue();
       }
