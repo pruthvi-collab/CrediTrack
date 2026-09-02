@@ -1415,6 +1415,7 @@
       if (currentView === "daystats") return renderDayStats(app);
       if (currentView === "calendar") return renderCalendar(app);
       if (currentView === "cashflow") return renderCashflow(app);
+      if (currentView === "inflowproj") return renderInflowProjector(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
       if (currentView === "backups") return renderBackups(app);
@@ -1510,6 +1511,19 @@
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Cash Flow & Profit</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">7/30-day inflow + accrual breakdown</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+
+            <div class="card" onclick="goInflowProjector()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(14,165,233,0.15);color:#0ea5e9">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Inflow Projector</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Custom-day expected collections</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -2285,6 +2299,13 @@
     // Calendar state — current month being viewed
     let calendarMonthOffset = 0;
     let cashflowTab = "monthly"; // "inflow", "breakdown", "monthly"
+    let inflowDays = 7; // for the Inflow Projector view
+    function setInflowDays(v) {
+      const n = parseInt(v, 10);
+      inflowDays = isNaN(n) || n < 1 ? 1 : (n > 365 ? 365 : n);
+      render();
+    }
+    function goInflowProjector() { currentView = "inflowproj"; render(); }
     function setCashflowTab(t) { cashflowTab = t; render(); }
 
     function calendarNav(delta) {
@@ -2895,6 +2916,95 @@
         </div>`;
 
       app.innerHTML = html;
+    }
+
+    function renderInflowProjector(app) {
+      const days = inflowDays;
+      const proj = getInflowProjection(days);
+
+      // Group items by date so the list is compact when several borrowers share a due date
+      const grouped = {};
+      proj.items.forEach(it => {
+        const key = it.dueDate.toISOString().slice(0, 10);
+        if (!grouped[key]) grouped[key] = { date: it.dueDate, items: [] };
+        grouped[key].items.push(it);
+      });
+      const groupedList = Object.values(grouped).sort((a, b) => a.date - b.date);
+
+      const presets = [7, 15, 30, 60, 90];
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Inflow Projector</h2>
+              <span style="font-size:13px;color:var(--text-dim)">Expected collections for the next N days</span>
+            </div>
+          </div>
+
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px">
+            <label style="display:block;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Number of days</label>
+            <input id="inflowDaysInput" type="number" inputmode="numeric" min="1" max="365" value="${days}" oninput="setInflowDays(this.value)" class="input-field" style="padding:12px 14px;font-size:16px;font-weight:600;margin-bottom:12px" />
+            <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+      presets.forEach(p => {
+        const active = days === p;
+        html += `<button onclick="setInflowDays(${p})" style="background:${active ? 'var(--accent)' : 'var(--card-alt)'};color:${active ? 'var(--fab-text)' : 'var(--text-dim)'};border:none;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:${active ? 700 : 500};cursor:pointer;font-family:'DM Sans',sans-serif">${p}d</button>`;
+      });
+      html += `
+            </div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:20px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Expected inflow · Next ${days} day${days === 1 ? '' : 's'}</div>
+            <div class="mono" style="font-size:32px;font-weight:700;color:var(--accent)">${fmt(proj.total)}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${proj.items.length} payment${proj.items.length === 1 ? '' : 's'} from ${new Set(proj.items.map(x => x.name)).size} borrower${new Set(proj.items.map(x => x.name)).size === 1 ? '' : 's'}</div>
+          </div>`;
+
+      if (proj.items.length === 0) {
+        html += `
+          <div style="text-align:center;padding:40px 20px">
+            <div style="font-size:14px;color:var(--text-dim)">No payments expected in the next ${days} day${days === 1 ? '' : 's'}</div>
+          </div>`;
+      } else {
+        html += `
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Payments by due date</div>
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden">`;
+        groupedList.forEach((g, gi) => {
+          const dayTotal = g.items.reduce((s, it) => s + it.amount, 0);
+          const dateStr = g.date.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
+          const borderBot = gi < groupedList.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+          html += `
+            <div style="padding:12px 16px;${borderBot}">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${g.items.length > 1 ? '8' : '0'}px">
+                <span style="font-size:13px;font-weight:600;color:var(--text)">${dateStr}</span>
+                <span class="mono" style="font-size:13px;font-weight:700;color:var(--accent)">${fmt(dayTotal)}</span>
+              </div>`;
+          if (g.items.length > 1) {
+            g.items.forEach(it => {
+              html += `
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
+                <span style="color:var(--text-dim)">${it.name} · Week ${it.weekNum}</span>
+                <span class="mono" style="color:var(--text-dim)">${fmt(it.amount)}</span>
+              </div>`;
+            });
+          } else {
+            const it = g.items[0];
+            html += `
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${it.name} · Week ${it.weekNum}</div>`;
+          }
+          html += `</div>`;
+        });
+        html += `</div>`;
+      }
+
+      html += `</div>`;
+      app.innerHTML = html;
+      // Restore focus to the input if it was previously focused
+      setTimeout(() => {
+        const el = document.getElementById("inflowDaysInput");
+        if (el && document.activeElement !== el) return;
+      }, 30);
     }
 
     function renderBorrowerList() {
