@@ -2299,13 +2299,31 @@
     // Calendar state — current month being viewed
     let calendarMonthOffset = 0;
     let cashflowTab = "monthly"; // "inflow", "breakdown", "monthly"
-    let inflowDays = 7; // for the Inflow Projector view
+    let inflowDays = 7; // computed value used for calculation
+    let inflowDaysInput = "7"; // raw input string (allows empty while typing)
     function setInflowDays(v) {
+      // Store the raw string as-is so the user can freely clear/type
+      inflowDaysInput = String(v);
+      // Only update the computed value when we have a valid positive number
       const n = parseInt(v, 10);
-      inflowDays = isNaN(n) || n < 1 ? 1 : (n > 365 ? 365 : n);
+      if (!isNaN(n) && n >= 1) {
+        inflowDays = n > 365 ? 365 : n;
+      }
+      // If input is empty or invalid, leave inflowDays unchanged so the summary
+      // keeps showing the last valid projection rather than jumping to 0
       render();
     }
-    function goInflowProjector() { currentView = "inflowproj"; render(); }
+    function setInflowDaysPreset(n) {
+      inflowDays = n;
+      inflowDaysInput = String(n);
+      render();
+    }
+    function goInflowProjector() {
+      // Reset input display to match current value on entry
+      inflowDaysInput = String(inflowDays);
+      currentView = "inflowproj";
+      render();
+    }
     function setCashflowTab(t) { cashflowTab = t; render(); }
 
     function calendarNav(delta) {
@@ -2945,11 +2963,11 @@
 
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px">
             <label style="display:block;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Number of days</label>
-            <input id="inflowDaysInput" type="number" inputmode="numeric" min="1" max="365" value="${days}" oninput="setInflowDays(this.value)" class="input-field" style="padding:12px 14px;font-size:16px;font-weight:600;margin-bottom:12px" />
+            <input id="inflowDaysInput" type="number" inputmode="numeric" min="1" max="365" value="${inflowDaysInput}" oninput="setInflowDays(this.value)" class="input-field" style="padding:12px 14px;font-size:16px;font-weight:600;margin-bottom:12px" />
             <div style="display:flex;flex-wrap:wrap;gap:6px">`;
       presets.forEach(p => {
         const active = days === p;
-        html += `<button onclick="setInflowDays(${p})" style="background:${active ? 'var(--accent)' : 'var(--card-alt)'};color:${active ? 'var(--fab-text)' : 'var(--text-dim)'};border:none;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:${active ? 700 : 500};cursor:pointer;font-family:'DM Sans',sans-serif">${p}d</button>`;
+        html += `<button onclick="setInflowDaysPreset(${p})" style="background:${active ? 'var(--accent)' : 'var(--card-alt)'};color:${active ? 'var(--fab-text)' : 'var(--text-dim)'};border:none;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:${active ? 700 : 500};cursor:pointer;font-family:'DM Sans',sans-serif">${p}d</button>`;
       });
       html += `
             </div>
@@ -2999,12 +3017,20 @@
       }
 
       html += `</div>`;
+      // Capture focus + caret position BEFORE we blow away the DOM
+      const oldEl = document.getElementById("inflowDaysInput");
+      const hadFocus = oldEl && document.activeElement === oldEl;
+      const caret = hadFocus ? oldEl.selectionStart : null;
+
       app.innerHTML = html;
-      // Restore focus to the input if it was previously focused
-      setTimeout(() => {
-        const el = document.getElementById("inflowDaysInput");
-        if (el && document.activeElement !== el) return;
-      }, 30);
+
+      if (hadFocus) {
+        const newEl = document.getElementById("inflowDaysInput");
+        if (newEl) {
+          newEl.focus();
+          try { newEl.setSelectionRange(caret, caret); } catch (e) {}
+        }
+      }
     }
 
     function renderBorrowerList() {
