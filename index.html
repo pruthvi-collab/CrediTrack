@@ -3094,7 +3094,9 @@
               <span class="mono" style="font-size:12px;color:var(--success);font-weight:500;min-width:70px;text-align:right">${fmt(received)}</span>
               ${!isComplete && !selectionMode
                 ? `<button onclick="quickTick('${b.id}',event)" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap">+ W${paid + 1}</button>`
-                : ''}
+                : (!isComplete && selectionMode
+                    ? `<span class="mono" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;white-space:nowrap">W${paid + 1}</span>`
+                    : '')}
             </div>
             ${selectionMode ? `</div>` : ''}
           </div>`;
