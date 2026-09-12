@@ -2299,28 +2299,28 @@
     // Calendar state — current month being viewed
     let calendarMonthOffset = 0;
     let cashflowTab = "monthly"; // "inflow", "breakdown", "monthly"
-    let inflowDays = 7; // computed value used for calculation
-    let inflowDaysInput = "7"; // raw input string (allows empty while typing)
-    function setInflowDays(v) {
-      // Store the raw string as-is so the user can freely clear/type
-      inflowDaysInput = String(v);
-      // Only update the computed value when we have a valid positive number
-      const n = parseInt(v, 10);
-      if (!isNaN(n) && n >= 1) {
-        inflowDays = n > 365 ? 365 : n;
-      }
-      // If input is empty or invalid, leave inflowDays unchanged so the summary
-      // keeps showing the last valid projection rather than jumping to 0
+    // Inflow Projector: user picks a target date (YYYY-MM-DD). Default = +7 days.
+    let inflowTargetDate = ""; // ISO date string like "2026-09-18"
+    function setInflowTargetDate(d) {
+      inflowTargetDate = d || "";
       render();
     }
     function setInflowDaysPreset(n) {
-      inflowDays = n;
-      inflowDaysInput = String(n);
+      // Set target date to today + n days (used by 7/15/30/60/90 chips)
+      const target = new Date();
+      target.setHours(0, 0, 0, 0);
+      target.setDate(target.getDate() + n);
+      inflowTargetDate = target.toISOString().slice(0, 10);
       render();
     }
     function goInflowProjector() {
-      // Reset input display to match current value on entry
-      inflowDaysInput = String(inflowDays);
+      // Default to 7 days from today if not set
+      if (!inflowTargetDate) {
+        const target = new Date();
+        target.setHours(0, 0, 0, 0);
+        target.setDate(target.getDate() + 7);
+        inflowTargetDate = target.toISOString().slice(0, 10);
+      }
       currentView = "inflowproj";
       render();
     }
@@ -2937,7 +2937,13 @@
     }
 
     function renderInflowProjector(app) {
-      const days = inflowDays;
+      // Compute number of days from today until target date
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = inflowTargetDate ? new Date(inflowTargetDate + "T00:00:00") : today;
+      target.setHours(0, 0, 0, 0);
+      const days = Math.max(0, Math.round((target - today) / (24 * 60 * 60 * 1000)));
+
       const proj = getInflowProjection(days);
 
       // Group items by date so the list is compact when several borrowers share a due date
@@ -2949,6 +2955,10 @@
       });
       const groupedList = Object.values(grouped).sort((a, b) => a.date - b.date);
 
+      // Today ISO for min attribute on date picker
+      const todayIso = today.toISOString().slice(0, 10);
+      const targetLabel = target.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+
       const presets = [7, 15, 30, 60, 90];
 
       let html = `
@@ -2957,13 +2967,14 @@
             <button class="back-btn" onclick="goMenu()">←</button>
             <div style="flex:1">
               <h2 style="font-size:22px;font-weight:700;color:var(--text)">Inflow Projector</h2>
-              <span style="font-size:13px;color:var(--text-dim)">Expected collections for the next N days</span>
+              <span style="font-size:13px;color:var(--text-dim)">Expected collections up to a target date</span>
             </div>
           </div>
 
           <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px">
-            <label style="display:block;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Number of days</label>
-            <input id="inflowDaysInput" type="number" inputmode="numeric" min="1" max="365" value="${inflowDaysInput}" oninput="setInflowDays(this.value)" class="input-field" style="padding:12px 14px;font-size:16px;font-weight:600;margin-bottom:12px" />
+            <label style="display:block;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Target date</label>
+            <input id="inflowDateInput" type="date" min="${todayIso}" value="${inflowTargetDate}" onchange="setInflowTargetDate(this.value)" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:12px 14px;font-size:16px;font-weight:600;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box;margin-bottom:12px" />
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">Quick pick:</div>
             <div style="display:flex;flex-wrap:wrap;gap:6px">`;
       presets.forEach(p => {
         const active = days === p;
@@ -2974,15 +2985,15 @@
           </div>
 
           <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:20px">
-            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Expected inflow · Next ${days} day${days === 1 ? '' : 's'}</div>
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Expected inflow · Through ${targetLabel}</div>
             <div class="mono" style="font-size:32px;font-weight:700;color:var(--accent)">${fmt(proj.total)}</div>
-            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${proj.items.length} payment${proj.items.length === 1 ? '' : 's'} from ${new Set(proj.items.map(x => x.name)).size} borrower${new Set(proj.items.map(x => x.name)).size === 1 ? '' : 's'}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${proj.items.length} payment${proj.items.length === 1 ? '' : 's'} from ${new Set(proj.items.map(x => x.name)).size} borrower${new Set(proj.items.map(x => x.name)).size === 1 ? '' : 's'} · Next ${days} day${days === 1 ? '' : 's'}</div>
           </div>`;
 
       if (proj.items.length === 0) {
         html += `
           <div style="text-align:center;padding:40px 20px">
-            <div style="font-size:14px;color:var(--text-dim)">No payments expected in the next ${days} day${days === 1 ? '' : 's'}</div>
+            <div style="font-size:14px;color:var(--text-dim)">No payments expected through ${targetLabel}</div>
           </div>`;
       } else {
         html += `
@@ -3017,20 +3028,7 @@
       }
 
       html += `</div>`;
-      // Capture focus + caret position BEFORE we blow away the DOM
-      const oldEl = document.getElementById("inflowDaysInput");
-      const hadFocus = oldEl && document.activeElement === oldEl;
-      const caret = hadFocus ? oldEl.selectionStart : null;
-
       app.innerHTML = html;
-
-      if (hadFocus) {
-        const newEl = document.getElementById("inflowDaysInput");
-        if (newEl) {
-          newEl.focus();
-          try { newEl.setSelectionRange(caret, caret); } catch (e) {}
-        }
-      }
     }
 
     function renderBorrowerList() {
@@ -3113,6 +3111,20 @@
         return s + (plan.total - calcReceived(b));
       }, 0);
 
+      // Pre-compute selection summary so it can be shown at the top
+      let selSum = 0;
+      let selReady = 0;
+      if (selectionMode) {
+        selectedIds.forEach(id => {
+          const bb = borrowers.find(x => x.id === id);
+          if (!bb) return;
+          const idx = bb.weeks.findIndex(w => !isWeekPaid(w));
+          if (idx === -1) return;
+          selSum += getBorrowerWeekAmount(bb, idx);
+          selReady++;
+        });
+      }
+
       let html = `
         <div class="fade-in">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px">
@@ -3122,7 +3134,7 @@
                 ? `<button onclick="toggleSelectionMode()" style="background:var(--accent);border:none;color:var(--fab-text);height:42px;padding:0 16px;border-radius:12px;cursor:pointer;font-size:14px;font-weight:600;font-family:'DM Sans',sans-serif">Done</button>`
                 : `
               <button onclick="toggleSelectionMode()" title="Select multiple borrowers" style="background:var(--card-alt);border:none;color:var(--text);height:42px;padding:0 12px;border-radius:12px;cursor:pointer;font-size:13px;font-weight:600;font-family:'DM Sans',sans-serif">Select</button>
-              <button onclick="toggleHideAmounts()" title="Hide/show amounts" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px">${hideAmounts ? '🙈' : '👁️'}</button>
+              <button onclick="goAdd()" title="Add new borrower" style="background:var(--accent);border:none;color:var(--fab-text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:600;line-height:1">+</button>
               <button onclick="goMenu()" style="background:var(--card-alt);border:none;color:var(--text);width:42px;height:42px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:3px">
                 <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
                 <span style="display:block;width:18px;height:2px;background:var(--text);border-radius:2px"></span>
@@ -3130,6 +3142,25 @@
               </button>`}
             </div>
           </div>`;
+
+      // Selection summary card — always visible at top when in selection mode
+      if (selectionMode) {
+        html += `
+          <div style="background:var(--card);border:1px solid var(--accent);border-radius:14px;padding:14px 16px;margin-bottom:16px">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Next week's collection</div>
+                <div class="mono" style="font-size:24px;font-weight:700;color:var(--accent);margin-top:2px">${fmt(selSum)}</div>
+                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${selReady} of ${selectedIds.size} ready to mark paid</div>
+              </div>
+              ${selectedIds.size > 0 ? `
+                <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+                  <button onclick="markSelectedPaid()" style="background:var(--accent);border:none;color:var(--fab-text);border-radius:8px;padding:8px 16px;font-size:13px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif" ${selReady === 0 ? 'disabled style="opacity:0.5;cursor:not-allowed"' : ''}>Paid</button>
+                  <button onclick="clearSelection()" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif">Clear</button>
+                </div>` : ''}
+            </div>
+          </div>`;
+      }
 
       if (borrowers.length > 0) {
         html += `
@@ -3155,34 +3186,6 @@
         html += `<div id="borrowerList">${renderBorrowerList()}</div>`;
       }
 
-      // Bottom action area — either the multi-select bar (when items selected) or the Add button
-      if (selectionMode && selectedIds.size > 0) {
-        // Compute sum of NEXT unpaid week amount for each selected borrower
-        let sumAmount = 0;
-        let readyCount = 0;
-        selectedIds.forEach(id => {
-          const bb = borrowers.find(x => x.id === id);
-          if (!bb) return;
-          const idx = bb.weeks.findIndex(w => !isWeekPaid(w));
-          if (idx === -1) return; // already fully paid, skipped
-          sumAmount += getBorrowerWeekAmount(bb, idx);
-          readyCount++;
-        });
-        html += `
-          <div style="position:fixed;bottom:16px;left:16px;right:16px;max-width:448px;margin:0 auto;background:var(--card);border:1px solid var(--accent);border-radius:14px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,0.3);z-index:100">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-              <div>
-                <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px">Next week's collection</div>
-                <div class="mono" style="font-size:22px;font-weight:700;color:var(--accent);margin-top:2px">${fmt(sumAmount)}</div>
-                <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${readyCount} of ${selectedIds.size} ready to mark paid</div>
-              </div>
-              <button onclick="clearSelection()" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:8px;padding:6px 12px;font-size:12px;cursor:pointer;font-family:'DM Sans',sans-serif">Clear</button>
-            </div>
-            <button onclick="markSelectedPaid()" style="width:100%;background:var(--accent);color:var(--fab-text);border:none;border-radius:10px;padding:12px;font-size:14px;font-weight:700;cursor:pointer;font-family:'DM Sans',sans-serif" ${readyCount === 0 ? 'disabled style="opacity:0.5"' : ''}>Mark ${readyCount} borrower${readyCount === 1 ? '' : 's'} paid today</button>
-          </div>`;
-      } else if (!selectionMode) {
-        html += `<button class="fab" onclick="goAdd()">+ Add Borrower</button>`;
-      }
       html += `</div>`;
       app.innerHTML = html;
     }
