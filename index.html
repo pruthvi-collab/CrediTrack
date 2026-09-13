@@ -1487,6 +1487,22 @@
       const totalReceived = activeBorrowers.reduce((s, b) => s + calcReceived(b), 0);
       const totalPending = activeBorrowers.reduce((s, b) => s + (getPlan(b).total - calcReceived(b)), 0);
 
+      // Portfolio composition — count active borrowers by plan type
+      // Group by (weekly amount + weeks) since that's what the user sees
+      const planCounts = {};
+      activeBorrowers.forEach(b => {
+        const p = getPlan(b);
+        if (!p) return;
+        const key = `${p.weekly}|${p.weeks}|${b.customPlan ? "c" : "s"}`;
+        if (!planCounts[key]) {
+          planCounts[key] = { weekly: p.weekly, weeks: p.weeks, isCustom: !!b.customPlan, count: 0, principal: 0 };
+        }
+        planCounts[key].count += 1;
+        planCounts[key].principal += p.principal;
+      });
+      // Sort by weekly amount descending, then by weeks
+      const compositionList = Object.values(planCounts).sort((a, b) => b.weekly - a.weekly || a.weeks - b.weeks);
+
       app.innerHTML = `
         <div class="fade-in">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
@@ -1674,6 +1690,35 @@
               </div>
             </div>
           </div>
+
+          ${compositionList.length > 0 ? `
+            <div style="margin-top:24px">
+              <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Active Book Composition</div>
+              <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+                ${compositionList.map((p, i) => {
+                  const borderBot = i < compositionList.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+                  const pct = Math.round((p.count / activeBorrowers.length) * 100);
+                  return `
+                <div style="padding:12px 16px;${borderBot}">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <div>
+                      <div style="font-size:14px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week · ${p.weeks} weeks${p.isCustom ? ' <span style="font-size:10px;color:var(--text-dim);font-weight:400">(custom)</span>' : ''}</div>
+                      <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Deployed ${fmt(p.principal)}</div>
+                    </div>
+                    <div style="text-align:right">
+                      <div class="mono" style="font-size:16px;font-weight:700;color:var(--accent)">${p.count}</div>
+                      <div style="font-size:10px;color:var(--text-dim)">${pct}%</div>
+                    </div>
+                  </div>
+                </div>`;
+                }).join('')}
+                <div style="padding:12px 16px;background:var(--card-alt);display:flex;justify-content:space-between;align-items:center">
+                  <span style="font-size:13px;font-weight:600;color:var(--text-dim)">Total active</span>
+                  <span class="mono" style="font-size:16px;font-weight:700;color:var(--text)">${activeBorrowers.length}</span>
+                </div>
+              </div>
+            </div>
+          ` : ''}
         </div>`;
     }
 
