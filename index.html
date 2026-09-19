@@ -200,6 +200,9 @@
       5000:  { principal: 65000,  weekly: 5000,  weeks: 15, total: 75000,  profit: 10000, weeklyAmounts: null },
       "5000_10": { principal: 42500,  weekly: 5000,  weeks: 10, total: 50000,  profit: 7500,  weeklyAmounts: null },
       3500:  { principal: 42500,  weekly: 3500,  weeks: 14, total: 50000,  profit: 7500,  weeklyAmounts: [3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,3500,4500] },
+      // Daily payment plan: ₹1,000/day × 100 days = ₹1,00,000 collected on ₹85,000 lent
+      // Uses same schema fields (weekly = per-slot amount, weeks = number of slots) plus isDaily flag
+      "1000_daily": { principal: 85000, weekly: 1000, weeks: 100, total: 100000, profit: 15000, weeklyAmounts: null, isDaily: true },
     };
 
     // Get amount for a specific week (handles custom last-week amounts)
@@ -271,12 +274,13 @@
       const nextIdx = b.weeks.findIndex(w => !isWeekPaid(w));
       if (nextIdx === -1) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
 
-      // Expected date = Week 1 date + (nextIdx + skipCount) * 7 days
-      // skipCount represents how many weeks the schedule has been paused/shifted
+      // Expected date = slot 1 date + (nextIdx + skipCount) * interval days
+      // interval = 7 for weekly plans, 1 for daily plans
       const skipCount = getSkipCount(b);
+      const interval = slotIntervalDays(b);
       const week1Date = new Date(getWeekDate(firstWeek));
       const expectedDate = new Date(week1Date);
-      expectedDate.setDate(week1Date.getDate() + (nextIdx + skipCount) * 7);
+      expectedDate.setDate(week1Date.getDate() + (nextIdx + skipCount) * interval);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -562,6 +566,24 @@
       return new Date(iso).toISOString().slice(0, 10);
     }
     function isWeekPaid(w) { return typeof w === "boolean" ? w : w?.paid; }
+    // Is this borrower on a daily-payment plan?
+    function isBorrowerDaily(b) {
+      const p = getPlan(b);
+      return !!(p && p.isDaily);
+    }
+    // Return the label prefix for a schedule slot: "W" for weekly, "D" for daily
+    function slotPrefix(b) {
+      return isBorrowerDaily(b) ? "D" : "W";
+    }
+    // Return the interval between scheduled payments in days
+    function slotIntervalDays(b) {
+      return isBorrowerDaily(b) ? 1 : 7;
+    }
+    // Return "week" or "day" for text labels
+    function slotWord(b, plural) {
+      const w = isBorrowerDaily(b) ? "day" : "week";
+      return plural ? w + "s" : w;
+    }
     function getWeekDate(w) { return typeof w === "boolean" ? null : w?.date; }
     // Get the schedule shift (how many weeks the whole schedule has been paused)
     function getSkipCount(b) {
@@ -903,7 +925,9 @@
     // Calculate monthly ROI % for a plan
     function getMonthlyROI(plan) {
       if (!plan || plan.principal <= 0) return 0;
-      const months = (plan.weeks * 7) / 30.4375; // avg days/month
+      // Duration in days: daily plans have 1 day per slot, weekly plans have 7 days per slot
+      const daysPerSlot = plan.isDaily ? 1 : 7;
+      const months = (plan.weeks * daysPerSlot) / 30.4375;
       if (months <= 0) return 0;
       return (plan.profit / plan.principal / months) * 100;
     }
@@ -1178,6 +1202,22 @@
         list = list.filter(b => b.name.toLowerCase().includes(q));
       }
 
+      // "Daily" sort acts as a filter — show only daily-payment borrowers
+      if (sortBy === "daily") {
+        list = list.filter(b => isBorrowerDaily(b));
+        // Within daily view, sort by due soon
+        list.sort((a, b) => {
+          const aOver = getOverdueStatus(a);
+          const bOver = getOverdueStatus(b);
+          if (aOver.overdue !== bOver.overdue) return aOver.overdue ? -1 : 1;
+          if (aOver.overdue && bOver.overdue) return bOver.daysLate - aOver.daysLate;
+          const aDays = getDaysSinceLastPayment(a);
+          const bDays = getDaysSinceLastPayment(b);
+          return (bDays || 0) - (aDays || 0);
+        });
+        return list;
+      }
+
       // Sort
       if (sortBy === "newest") {
         list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
@@ -1208,6 +1248,13 @@
           return balB - balA; // highest balance first
         });
       }
+
+      // Push daily-payment borrowers to the bottom (unless "Daily" filter is active, handled above)
+      list.sort((a, b) => {
+        const aDaily = isBorrowerDaily(a) ? 1 : 0;
+        const bDaily = isBorrowerDaily(b) ? 1 : 0;
+        return aDaily - bDaily; // 0 (weekly) before 1 (daily), stable within groups
+      });
 
       return list;
     }
@@ -1252,7 +1299,7 @@
         const credited = new Date(b.createdAt);
         for (let i = 0; i < plan.weeks; i++) {
           const dueDate = new Date(credited);
-          dueDate.setDate(dueDate.getDate() + (i + 1) * 7);
+          dueDate.setDate(dueDate.getDate() + (i + 1) * slotIntervalDays(b));
           if (dueDate.getMonth() === month && dueDate.getFullYear() === year) {
             expected += getBorrowerWeekAmount(b, i);
           }
@@ -1310,7 +1357,7 @@
         // Expected this year based on schedule
         for (let i = 0; i < plan.weeks; i++) {
           const dueDate = new Date(credited);
-          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          dueDate.setDate(credited.getDate() + (i + 1) * slotIntervalDays(b));
           if (dueDate.getFullYear() === year) {
             totalExpected += getBorrowerWeekAmount(b, i);
           }
@@ -1378,7 +1425,7 @@
         for (let i = 0; i < plan.weeks; i++) {
           // Schedule: due date = credited UTC date + (i+1)*7 days
           const dueDate = new Date(credited);
-          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * 7);
+          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * slotIntervalDays(b));
           // Normalize to UTC midnight for comparison
           const dueUtc = new Date(Date.UTC(dueDate.getUTCFullYear(), dueDate.getUTCMonth(), dueDate.getUTCDate()));
           if (dueUtc >= weekStart && dueUtc < weekEnd) {
@@ -1493,15 +1540,19 @@
       activeBorrowers.forEach(b => {
         const p = getPlan(b);
         if (!p) return;
-        const key = `${p.weekly}|${p.weeks}|${b.customPlan ? "c" : "s"}`;
+        const key = `${p.weekly}|${p.weeks}|${b.customPlan ? "c" : "s"}|${p.isDaily ? "d" : "w"}`;
         if (!planCounts[key]) {
-          planCounts[key] = { weekly: p.weekly, weeks: p.weeks, isCustom: !!b.customPlan, count: 0, principal: 0 };
+          planCounts[key] = { weekly: p.weekly, weeks: p.weeks, isCustom: !!b.customPlan, isDaily: !!p.isDaily, count: 0, principal: 0 };
         }
         planCounts[key].count += 1;
         planCounts[key].principal += p.principal;
       });
-      // Sort by weekly amount descending, then by weeks
-      const compositionList = Object.values(planCounts).sort((a, b) => b.weekly - a.weekly || a.weeks - b.weeks);
+      // Sort by weekly amount descending, then by weeks — daily plans naturally sort to the bottom since weekly is smaller
+      const compositionList = Object.values(planCounts).sort((a, b) => {
+        // Daily always after weekly
+        if (a.isDaily !== b.isDaily) return a.isDaily ? 1 : -1;
+        return b.weekly - a.weekly || a.weeks - b.weeks;
+      });
 
       app.innerHTML = `
         <div class="fade-in">
@@ -1702,7 +1753,7 @@
                 <div style="padding:12px 16px;${borderBot}">
                   <div style="display:flex;justify-content:space-between;align-items:center">
                     <div>
-                      <div style="font-size:14px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week · ${p.weeks} weeks${p.isCustom ? ' <span style="font-size:10px;color:var(--text-dim);font-weight:400">(custom)</span>' : ''}</div>
+                      <div style="font-size:14px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/${p.isDaily ? 'day' : 'week'} · ${p.weeks} ${p.isDaily ? 'days' : 'weeks'}${p.isCustom ? ' <span style="font-size:10px;color:var(--text-dim);font-weight:400">(custom)</span>' : ''}</div>
                       <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Deployed ${fmt(p.principal)}</div>
                     </div>
                     <div style="text-align:right">
@@ -2174,6 +2225,7 @@
         { key: "5000",  label: "₹5,000/week × 15w",  plan: PLANS[5000] },
         { key: "5000_10", label: "₹5,000/week × 10 weeks",  plan: PLANS["5000_10"] },
         { key: "3500",  label: "₹3,500/week",  plan: PLANS[3500] },
+        { key: "1000_daily",  label: "₹1,000/day × 100 days",  plan: PLANS["1000_daily"] },
       ].map(p => ({ ...p, roi: getMonthlyROI(p.plan) }));
 
       // Active borrowers only — completed loans shouldn't affect portfolio ROI
@@ -2185,7 +2237,7 @@
       let weightedMonths = 0;
       activeBorrowers.forEach(b => {
         const plan = getPlan(b);
-        const months = (plan.weeks * 7) / 30.4375;
+        const months = (plan.weeks * (plan.isDaily ? 1 : 7)) / 30.4375;
         totalPrincipal += plan.principal;
         totalProfit += plan.profit;
         weightedMonths += plan.principal * months;
@@ -2221,7 +2273,7 @@
 
       planRates.forEach((p, i) => {
         const borderBot = i < planRates.length - 1 ? "border-bottom:1px solid var(--border);" : "";
-        const months = (p.plan.weeks * 7) / 30.4375;
+        const months = (p.plan.weeks * (p.plan.isDaily ? 1 : 7)) / 30.4375;
         html += `
             <div style="padding:12px 16px;${borderBot}">
               <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
@@ -2243,7 +2295,7 @@
         customBorrowers.forEach((b, i) => {
           const plan = b.customPlan;
           const roi = getMonthlyROI(plan);
-          const months = (plan.weeks * 7) / 30.4375;
+          const months = (plan.weeks * (plan.isDaily ? 1 : 7)) / 30.4375;
           const borderBot = i < customBorrowers.length - 1 ? "border-bottom:1px solid var(--border);" : "";
           html += `
             <div style="padding:12px 16px;${borderBot}">
@@ -2394,7 +2446,7 @@
         const credited = new Date(b.createdAt);
         for (let i = 0; i < plan.weeks; i++) {
           const dueDate = new Date(credited);
-          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          dueDate.setDate(credited.getDate() + (i + 1) * slotIntervalDays(b));
           if (dueDate.getFullYear() === year && dueDate.getMonth() === month) {
             const day = dueDate.getDate();
             if (!paymentsByDay[day]) paymentsByDay[day] = [];
@@ -2531,7 +2583,7 @@
         const credited = new Date(b.createdAt);
         for (let i = 0; i < plan.weeks; i++) {
           const dueDate = new Date(credited);
-          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          dueDate.setDate(credited.getDate() + (i + 1) * slotIntervalDays(b));
           if (dueDate.getFullYear() === y && dueDate.getMonth() === m-1 && dueDate.getDate() === d) {
             const paid = isWeekPaid(b.weeks[i]);
             const amt = getBorrowerWeekAmount(b, i);
@@ -2559,7 +2611,7 @@
           // Skip already-paid weeks
           if (isWeekPaid(b.weeks[i])) continue;
           const dueDate = new Date(credited);
-          dueDate.setDate(credited.getDate() + (i + 1) * 7);
+          dueDate.setDate(credited.getDate() + (i + 1) * slotIntervalDays(b));
           dueDate.setHours(0, 0, 0, 0);
           // Include if due between today and the limit (inclusive)
           if (dueDate >= now && dueDate <= limit) {
@@ -2585,7 +2637,7 @@
         const credited = new Date(b.createdAt);
         for (let i = 0; i < plan.weeks; i++) {
           const dueDate = new Date(credited);
-          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * 7);
+          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * slotIntervalDays(b));
           if (dueDate >= start && dueDate < end) {
             projected += profitPerWeek;
           }
@@ -2681,7 +2733,7 @@
           if (isWeekPaid(b.weeks[i])) continue;
           // Schedule: due date = credited UTC date + (i+1)*7 days
           const dueDate = new Date(credited);
-          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * 7);
+          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * slotIntervalDays(b));
           if (dueDate < startBoundary || dueDate >= endBoundary) continue;
           const y = dueDate.getUTCFullYear();
           const m = dueDate.getUTCMonth();
@@ -3099,7 +3151,7 @@
         // Expected completion: anchor on Week 1 paid date if available, else credited date
         const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
         const expectedEnd = new Date(anchorIso);
-        expectedEnd.setUTCDate(expectedEnd.getUTCDate() + plan.weeks * 7);
+        expectedEnd.setUTCDate(expectedEnd.getUTCDate() + plan.weeks * slotIntervalDays(b));
 
         const isSelected = selectionMode && selectedIds.has(b.id);
         const cardClick = selectionMode ? `toggleSelect('${b.id}',event)` : `goDetail('${b.id}')`;
@@ -3122,7 +3174,7 @@
                   ${overdue.overdue ? `<span style="font-size:10px;background:rgba(239,68,68,0.15);color:var(--danger);padding:2px 8px;border-radius:20px;font-weight:700">OVERDUE ${overdue.daysLate}d</span>` : ''}
                   ${showNearingDue ? `<span style="font-size:10px;background:rgba(245,158,11,0.15);color:var(--warn);padding:2px 8px;border-radius:20px;font-weight:600">${daysSince}d since last</span>` : ''}
                 </div>
-                <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/week · ${paid}/${plan.weeks} weeks</div>
+                <div style="font-size:12px;color:var(--text-dim);margin-top:2px">${fmt(plan.weekly)}/${slotWord(b)} · ${paid}/${plan.weeks} ${slotWord(b, true)}</div>
                 <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cr: ${fmtShortDate(b.createdAt)} · Ex-Comp: ${fmtShortDate(expectedEnd.toISOString())}</div>
               </div>
               <div style="text-align:right">
@@ -3136,9 +3188,9 @@
               <div style="flex:1" class="progress-bar" style="height:6px"><div style="height:6px"><div class="progress-fill" style="width:${progress}%;${isComplete ? 'background:var(--success)' : ''}"></div></div></div>
               <span class="mono" style="font-size:12px;color:var(--success);font-weight:500;min-width:70px;text-align:right">${fmt(received)}</span>
               ${!isComplete && !selectionMode
-                ? `<button onclick="quickTick('${b.id}',event)" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap">+ W${paid + 1}</button>`
+                ? `<button onclick="quickTick('${b.id}',event)" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif;white-space:nowrap">+ ${slotPrefix(b)}${paid + 1}</button>`
                 : (!isComplete && selectionMode
-                    ? `<span class="mono" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;white-space:nowrap">W${paid + 1}</span>`
+                    ? `<span class="mono" style="background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:6px;padding:4px 8px;font-size:11px;font-weight:600;white-space:nowrap">${slotPrefix(b)}${paid + 1}</span>`
                     : '')}
             </div>
             ${selectionMode ? `</div>` : ''}
@@ -3217,6 +3269,7 @@
             ${chip("Newest", "newest", sortBy === "newest", "setSort")}
             ${chip("Oldest", "oldest", sortBy === "oldest", "setSort")}
             ${chip("Due Soon", "duesoon", sortBy === "duesoon", "setSort")}
+            ${chip("Daily", "daily", sortBy === "daily", "setSort")}
           </div>`;
       }
 
@@ -3278,7 +3331,7 @@
                 const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
                 const anchor = new Date(anchorIso);
                 const expectedEnd = new Date(anchor);
-                expectedEnd.setUTCDate(anchor.getUTCDate() + plan.weeks * 7);
+                expectedEnd.setUTCDate(anchor.getUTCDate() + plan.weeks * slotIntervalDays(b));
                 return `<div style="font-size:11px;color:var(--text-dim);margin-top:4px">Expected completion: <span style="color:var(--accent)">${fmtDate(expectedEnd.toISOString())}</span></div>`;
               })()}
             </div>
@@ -3311,12 +3364,12 @@
           <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);overflow:hidden">
             <div style="padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
               <div style="display:flex;flex-direction:column;gap:2px">
-                <span style="font-size:14px;font-weight:600">Weekly Payments</span>
-                ${getSkipCount(b) > 0 ? `<span style="font-size:11px;color:var(--warn)">⏸ Schedule paused by ${getSkipCount(b)} week${getSkipCount(b) === 1 ? '' : 's'}</span>` : ''}
+                <span style="font-size:14px;font-weight:600">${isBorrowerDaily(b) ? 'Daily' : 'Weekly'} Payments</span>
+                ${getSkipCount(b) > 0 ? `<span style="font-size:11px;color:var(--warn)">⏸ Schedule paused by ${getSkipCount(b)} ${slotWord(b)}${getSkipCount(b) === 1 ? '' : 's'}</span>` : ''}
               </div>
               <div style="display:flex;gap:6px">
                 ${getSkipCount(b) > 0 ? `<button onclick="undoOneSkip('${b.id}',event)" title="Undo last skip" style="background:transparent;border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:6px 10px;font-size:11px;cursor:pointer;font-family:'DM Sans',sans-serif">↶ Undo skip</button>` : ''}
-                <button onclick="skipOneWeek('${b.id}',event)" title="Pause schedule by 1 week" style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--warn);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">⏭ Skip 1 week</button>
+                <button onclick="skipOneWeek('${b.id}',event)" title="Pause schedule by 1 ${slotWord(b)}" style="background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--warn);border-radius:6px;padding:6px 10px;font-size:11px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">⏭ Skip 1 ${slotWord(b)}</button>
               </div>
             </div>`;
 
@@ -3325,11 +3378,12 @@
         const paidDate = getWeekDate(weekData);
         const weekAmt = getBorrowerWeekAmount(b, i);
         const borderBot = i < b.weeks.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+        const slotLabel = `${isBorrowerDaily(b) ? 'Day' : 'Week'} ${i + 1}`;
         html += `
             <div class="week-row ${checked ? 'checked' : ''}" style="${borderBot}">
               <div class="checkbox ${checked ? 'on' : 'off'}" onclick="toggleWeek('${b.id}',${i})">${checked ? '<span style="color:var(--fab-text);font-size:14px;font-weight:700">✓</span>' : ''}</div>
               <div style="flex:1" onclick="toggleWeek('${b.id}',${i})">
-                <span style="font-size:15px;color:${checked ? 'var(--text)' : 'var(--text-dim)'};font-weight:${checked ? 500 : 400};display:block">Week ${i + 1}</span>
+                <span style="font-size:15px;color:${checked ? 'var(--text)' : 'var(--text-dim)'};font-weight:${checked ? 500 : 400};display:block">${slotLabel}</span>
                 ${checked && paidDate
                   ? `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
                        <span>Paid on</span>
@@ -3390,7 +3444,7 @@
       }
 
       // Built-in plan options
-      const planKeys = ["20000_10", 10000, "10000_10", 5000, "5000_10", 3500];
+      const planKeys = ["20000_10", 10000, "10000_10", 5000, "5000_10", 3500, "1000_daily"];
 
       let html = `
         <div class="fade-in">
@@ -3418,8 +3472,8 @@
         html += `
             <div onclick="selectRenewPlan('${key}')" style="background:${isSelected ? 'rgba(34,211,167,0.12)' : 'var(--card)'};border:${isSelected ? '2px solid var(--accent)' : '1px solid var(--border)'};border-radius:12px;padding:14px 16px;cursor:pointer;transition:all 0.15s">
               <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/week</div>
-                <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600">${p.weeks} weeks</div>
+                <div style="font-size:15px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/${p.isDaily ? 'day' : 'week'}</div>
+                <div class="mono" style="font-size:12px;color:var(--accent);font-weight:600">${p.weeks} ${p.isDaily ? 'days' : 'weeks'}</div>
               </div>
               <div style="font-size:11px;color:var(--text-dim)">
                 Lent ${fmt(p.principal)} · Total ${fmt(p.total)} · Profit ${fmt(p.profit)}
@@ -3504,20 +3558,29 @@
         const isActive = String(newPlan) === String(key);
         // Nicer plan label — for the short variants, show a distinct label
         const isShortVariant = key === "5000_10" || key === "10000_10" || key === "20000_10";
-        const shortLabel = isShortVariant
-          ? `${fmt(plan.weekly)} × 10 weeks`
-          : `${fmt(plan.weekly)}<span style="font-size:13px;font-weight:400;color:var(--text-dim)">/week</span>`;
+        const isDailyPlan = !!plan.isDaily;
+        let shortLabel;
+        if (isDailyPlan) {
+          shortLabel = `${fmt(plan.weekly)} × ${plan.weeks} days`;
+        } else if (isShortVariant) {
+          shortLabel = `${fmt(plan.weekly)} × 10 weeks`;
+        } else {
+          shortLabel = `${fmt(plan.weekly)}<span style="font-size:13px;font-weight:400;color:var(--text-dim)">/week</span>`;
+        }
+        const detailLine = isDailyPlan
+          ? `Loan: ${fmt(plan.principal)} · ${plan.weeks} days · Total ${fmt(plan.total)}`
+          : `Loan: ${fmt(plan.principal)} · ${plan.weeks} weeks · Total ${fmt(plan.total)}`;
         html += `
               <div class="plan-option ${isActive ? 'active' : 'inactive'}" onclick="selectPlan('${key}')">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-                  <span class="mono" style="font-size:${isShortVariant ? '15' : '18'}px;font-weight:700;color:${isActive ? 'var(--accent)' : 'var(--text)'}">
+                  <span class="mono" style="font-size:${isShortVariant || isDailyPlan ? '15' : '18'}px;font-weight:700;color:${isActive ? 'var(--accent)' : 'var(--text)'}">
                     ${shortLabel}
                   </span>
                   <div style="width:22px;height:22px;border-radius:50%;${isActive ? 'background:var(--accent)' : 'border:2px solid var(--text-dim)'};display:flex;align-items:center;justify-content:center">
                     ${isActive ? '<span style="color:var(--fab-text);font-size:12px;font-weight:700">✓</span>' : ''}
                   </div>
                 </div>
-                <div style="font-size:13px;color:var(--text-dim)">Loan: ${fmt(plan.principal)} · ${plan.weeks} weeks · Total ${fmt(plan.total)}</div>
+                <div style="font-size:13px;color:var(--text-dim)">${detailLine}</div>
               </div>`;
       });
 
