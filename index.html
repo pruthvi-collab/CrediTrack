@@ -2606,12 +2606,24 @@
 
       borrowers.forEach(b => {
         const plan = getPlan(b);
-        const credited = new Date(b.createdAt);
+        // Anchor future schedule on Week 1's actual paid date if available,
+        // otherwise fall back to createdAt (matches overdue logic)
+        const interval = slotIntervalDays(b);
+        const week1 = b.weeks[0];
+        let anchor, offsetSlots;
+        if (isWeekPaid(week1)) {
+          anchor = new Date(getWeekDate(week1));
+          offsetSlots = 0;
+        } else {
+          anchor = new Date(b.createdAt);
+          offsetSlots = 1;
+        }
+        const skipCount = getSkipCount(b);
         for (let i = 0; i < plan.weeks; i++) {
           // Skip already-paid weeks
           if (isWeekPaid(b.weeks[i])) continue;
-          const dueDate = new Date(credited);
-          dueDate.setDate(credited.getDate() + (i + 1) * slotIntervalDays(b));
+          const dueDate = new Date(anchor);
+          dueDate.setDate(anchor.getDate() + (i + offsetSlots + skipCount) * interval);
           dueDate.setHours(0, 0, 0, 0);
           // Include if due between today and the limit (inclusive)
           if (dueDate >= now && dueDate <= limit) {
@@ -2727,13 +2739,27 @@
         const plan = getPlan(b);
         const profitPerWeek = plan.weeks > 0 ? plan.profit / plan.weeks : 0;
         const credited = new Date(b.createdAt);
+        // Anchor the future schedule on Week 1's actual payment date if available
+        // (matches getOverdueStatus behaviour). Otherwise fall back to createdAt.
+        // This prevents "phantom" Sep dues when the borrower started paying late.
+        const interval = slotIntervalDays(b);
+        const week1 = b.weeks[0];
+        let anchor;
+        let offsetSlots;
+        if (isWeekPaid(week1)) {
+          anchor = new Date(getWeekDate(week1));
+          offsetSlots = 0; // Week 1 sits AT anchor; Week i sits at anchor + i*interval
+        } else {
+          anchor = credited;
+          offsetSlots = 1; // Week 1 sits at credited + 1*interval
+        }
+        const skipCount = getSkipCount(b);
 
         for (let i = 0; i < plan.weeks; i++) {
           // Skip already-paid weeks (they're in the historical buckets)
           if (isWeekPaid(b.weeks[i])) continue;
-          // Schedule: due date = credited UTC date + (i+1)*7 days
-          const dueDate = new Date(credited);
-          dueDate.setUTCDate(credited.getUTCDate() + (i + 1) * slotIntervalDays(b));
+          const dueDate = new Date(anchor);
+          dueDate.setUTCDate(anchor.getUTCDate() + (i + offsetSlots + skipCount) * interval);
           if (dueDate < startBoundary || dueDate >= endBoundary) continue;
           const y = dueDate.getUTCFullYear();
           const m = dueDate.getUTCMonth();
