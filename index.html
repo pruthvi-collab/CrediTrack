@@ -303,7 +303,17 @@
     let confirmDeleteId = null;
     let showProfitBreakdown = false;
     let editingNameId = null;
-    let sortBy = "duesoon"; // newest, oldest, duesoon, name, balance
+    // Sort preference: load from localStorage, defaulting to "duesoon"
+    // Valid sort values — if a stale/invalid value is stored, fall back to default
+    const VALID_SORTS = ["newest", "oldest", "duesoon", "daily", "name", "balance"];
+    function loadSortPref() {
+      try {
+        const stored = localStorage.getItem("creditrack-sort");
+        if (stored && VALID_SORTS.indexOf(stored) !== -1) return stored;
+      } catch (e) {}
+      return "duesoon";
+    }
+    let sortBy = loadSortPref();
     let filterBy = "all";  // all, active, completed
     let searchQuery = "";
     let appLocked = false;
@@ -921,6 +931,7 @@
     function goDayStats() { currentView = "daystats"; render(); }
     function goCalendar() { currentView = "calendar"; render(); }
     function goCashflow() { currentView = "cashflow"; render(); }
+    function goComposition() { currentView = "composition"; render(); }
 
     // Calculate monthly ROI % for a plan
     function getMonthlyROI(plan) {
@@ -1176,7 +1187,11 @@
       render();
     }
 
-    function setSort(s) { sortBy = s; render(); }
+    function setSort(s) {
+      sortBy = s;
+      try { localStorage.setItem("creditrack-sort", s); } catch (e) {}
+      render();
+    }
     function setFilter(f) { filterBy = f; render(); }
     function setSearch(q) {
       searchQuery = q;
@@ -1412,7 +1427,7 @@
             if (d >= weekStart && d < weekEnd) {
               const amt = getBorrowerWeekAmount(b, i);
               received += amt;
-              paidThisWeek.push({ name: b.name, weekNum: i + 1, amount: amt, date: d });
+              paidThisWeek.push({ name: b.name, weekNum: i + 1, amount: amt, date: d, isDaily: !!plan.isDaily });
             }
           }
         });
@@ -1432,7 +1447,7 @@
             const amt = getBorrowerWeekAmount(b, i);
             expected += amt;
             const isPaid = isWeekPaid(b.weeks[i]);
-            expectedThisWeek.push({ id: b.id, name: b.name, weekNum: i + 1, amount: amt, dueDate: dueUtc, isPaid });
+            expectedThisWeek.push({ id: b.id, name: b.name, weekNum: i + 1, amount: amt, dueDate: dueUtc, isPaid, isDaily: !!plan.isDaily });
           }
         }
       });
@@ -1462,6 +1477,7 @@
       if (currentView === "daystats") return renderDayStats(app);
       if (currentView === "calendar") return renderCalendar(app);
       if (currentView === "cashflow") return renderCashflow(app);
+      if (currentView === "composition") return renderComposition(app);
       if (currentView === "inflowproj") return renderInflowProjector(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
@@ -1534,26 +1550,6 @@
       const totalReceived = activeBorrowers.reduce((s, b) => s + calcReceived(b), 0);
       const totalPending = activeBorrowers.reduce((s, b) => s + (getPlan(b).total - calcReceived(b)), 0);
 
-      // Portfolio composition — count active borrowers by plan type
-      // Group by (weekly amount + weeks) since that's what the user sees
-      const planCounts = {};
-      activeBorrowers.forEach(b => {
-        const p = getPlan(b);
-        if (!p) return;
-        const key = `${p.weekly}|${p.weeks}|${b.customPlan ? "c" : "s"}|${p.isDaily ? "d" : "w"}`;
-        if (!planCounts[key]) {
-          planCounts[key] = { weekly: p.weekly, weeks: p.weeks, isCustom: !!b.customPlan, isDaily: !!p.isDaily, count: 0, principal: 0 };
-        }
-        planCounts[key].count += 1;
-        planCounts[key].principal += p.principal;
-      });
-      // Sort by weekly amount descending, then by weeks — daily plans naturally sort to the bottom since weekly is smaller
-      const compositionList = Object.values(planCounts).sort((a, b) => {
-        // Daily always after weekly
-        if (a.isDaily !== b.isDaily) return a.isDaily ? 1 : -1;
-        return b.weekly - a.weekly || a.weeks - b.weeks;
-      });
-
       app.innerHTML = `
         <div class="fade-in">
           <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
@@ -1582,20 +1578,6 @@
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
             </div>
-
-            <div class="card" onclick="goInflowProjector()">
-              <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(14,165,233,0.15);color:#0ea5e9">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
-                </div>
-                <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">Inflow Projector</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Custom-day expected collections</div>
-                </div>
-                <span style="color:var(--text-dim);font-size:18px">›</span>
-              </div>
-            </div>
-
             <div class="card" onclick="goProfit()">
               <div style="display:flex;align-items:center;gap:14px">
                 <div class="menu-icon" style="background:rgba(167,139,250,0.15);color:#a78bfa">
@@ -1608,46 +1590,18 @@
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
             </div>
-
-            <div class="card" onclick="goWeekly()">
+            <div class="card" onclick="goInflowProjector()">
               <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(34,211,167,0.15);color:#22d3a7">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <div class="menu-icon" style="background:rgba(14,165,233,0.15);color:#0ea5e9">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="M8 14h.01M12 14h.01M16 14h.01M8 18h.01M12 18h.01"/></svg>
                 </div>
                 <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">This Week's Collection</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Expected vs received this week</div>
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Inflow Projector</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Custom-day expected collections</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
             </div>
-
-            <div class="card" onclick="goSummary()">
-              <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(59,130,246,0.15);color:#3b82f6">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-                </div>
-                <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">Monthly Summary</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Received this month vs expected</div>
-                </div>
-                <span style="color:var(--text-dim);font-size:18px">›</span>
-              </div>
-            </div>
-
-            <div class="card" onclick="goYearly()">
-              <div style="display:flex;align-items:center;gap:14px">
-                <div class="menu-icon" style="background:rgba(139,92,246,0.15);color:#8b5cf6">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-                </div>
-                <div style="flex:1">
-                  <div style="font-size:16px;font-weight:600;color:var(--text)">Yearly Summary</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Full year overview with monthly breakdown</div>
-                </div>
-                <span style="color:var(--text-dim);font-size:18px">›</span>
-              </div>
-            </div>
-
             <div class="card" onclick="goRates()">
               <div style="display:flex;align-items:center;gap:14px">
                 <div class="menu-icon" style="background:rgba(6,182,212,0.15);color:#06b6d4">
@@ -1660,7 +1614,42 @@
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
             </div>
-
+            <div class="card" onclick="goWeekly()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(34,211,167,0.15);color:#22d3a7">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">This Week's Collection</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Expected vs received this week</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+            <div class="card" onclick="goSummary()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(59,130,246,0.15);color:#3b82f6">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Monthly Summary</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Received this month vs expected</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+            <div class="card" onclick="goComposition()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(236,72,153,0.15);color:#ec4899">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Active Book Composition</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Borrower count per plan type</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
             <div class="card" onclick="goArchive()">
               <div style="display:flex;align-items:center;gap:14px">
                 <div class="menu-icon" style="background:rgba(148,163,184,0.15);color:#94a3b8">
@@ -1673,7 +1662,19 @@
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
             </div>
-
+            <div class="card" onclick="goYearly()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(139,92,246,0.15);color:#8b5cf6">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Yearly Summary</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Full year overview with monthly breakdown</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+            
             <div class="card" onclick="exportData()">
               <div style="display:flex;align-items:center;gap:14px">
                 <div class="menu-icon" style="background:rgba(16,185,129,0.15);color:#10b981">
@@ -1742,34 +1743,6 @@
             </div>
           </div>
 
-          ${compositionList.length > 0 ? `
-            <div style="margin-top:24px">
-              <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">Active Book Composition</div>
-              <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden">
-                ${compositionList.map((p, i) => {
-                  const borderBot = i < compositionList.length - 1 ? "border-bottom:1px solid var(--border);" : "";
-                  const pct = Math.round((p.count / activeBorrowers.length) * 100);
-                  return `
-                <div style="padding:12px 16px;${borderBot}">
-                  <div style="display:flex;justify-content:space-between;align-items:center">
-                    <div>
-                      <div style="font-size:14px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/${p.isDaily ? 'day' : 'week'} · ${p.weeks} ${p.isDaily ? 'days' : 'weeks'}${p.isCustom ? ' <span style="font-size:10px;color:var(--text-dim);font-weight:400">(custom)</span>' : ''}</div>
-                      <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Deployed ${fmt(p.principal)}</div>
-                    </div>
-                    <div style="text-align:right">
-                      <div class="mono" style="font-size:16px;font-weight:700;color:var(--accent)">${p.count}</div>
-                      <div style="font-size:10px;color:var(--text-dim)">${pct}%</div>
-                    </div>
-                  </div>
-                </div>`;
-                }).join('')}
-                <div style="padding:12px 16px;background:var(--card-alt);display:flex;justify-content:space-between;align-items:center">
-                  <span style="font-size:13px;font-weight:600;color:var(--text-dim)">Total active</span>
-                  <span class="mono" style="font-size:16px;font-weight:700;color:var(--text)">${activeBorrowers.length}</span>
-                </div>
-              </div>
-            </div>
-          ` : ''}
         </div>`;
     }
 
@@ -1887,7 +1860,7 @@
             <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot};cursor:pointer" onclick="goDetail('${p.id}')">
               <div>
                 <div style="font-size:14px;font-weight:500;color:var(--text)">${p.name}</div>
-                <div style="font-size:11px;color:var(--text-dim)">Week ${p.weekNum} · Due ${fmtDate(p.dueDate.toISOString())}</div>
+                <div style="font-size:11px;color:var(--text-dim)">${p.isDaily ? 'Day' : 'Week'} ${p.weekNum} · Due ${fmtDate(p.dueDate.toISOString())}</div>
               </div>
               <div class="mono" style="font-size:15px;font-weight:700;color:var(--warn)">${fmt(p.amount)}</div>
             </div>`;
@@ -1908,7 +1881,7 @@
             <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot}">
               <div>
                 <div style="font-size:14px;font-weight:500;color:var(--text)">${p.name}</div>
-                <div style="font-size:11px;color:var(--text-dim)">Week ${p.weekNum} · Paid ${fmtDate(p.date.toISOString())}</div>
+                <div style="font-size:11px;color:var(--text-dim)">${p.isDaily ? 'Day' : 'Week'} ${p.weekNum} · Paid ${fmtDate(p.date.toISOString())}</div>
               </div>
               <div class="mono" style="font-size:15px;font-weight:700;color:var(--success)">${fmt(p.amount)}</div>
             </div>`;
@@ -1984,6 +1957,79 @@
           ${borrowers.length === 0 ? `<div style="text-align:center;padding:40px 20px"><div style="font-size:14px;color:var(--text-dim)">No data yet</div></div>` : ''}
         </div>`;
 
+      app.innerHTML = html;
+    }
+
+    function renderComposition(app) {
+      // Build the active-book composition — same logic as menu previously inlined
+      const activeBorrowers = borrowers.filter(b => !b.weeks.every(isWeekPaid));
+      const planCounts = {};
+      activeBorrowers.forEach(b => {
+        const p = getPlan(b);
+        if (!p) return;
+        const key = `${p.weekly}|${p.weeks}|${b.customPlan ? "c" : "s"}|${p.isDaily ? "d" : "w"}`;
+        if (!planCounts[key]) {
+          planCounts[key] = { weekly: p.weekly, weeks: p.weeks, isCustom: !!b.customPlan, isDaily: !!p.isDaily, count: 0, principal: 0 };
+        }
+        planCounts[key].count += 1;
+        planCounts[key].principal += p.principal;
+      });
+      const compositionList = Object.values(planCounts).sort((a, b) => {
+        if (a.isDaily !== b.isDaily) return a.isDaily ? 1 : -1;
+        return b.weekly - a.weekly || a.weeks - b.weeks;
+      });
+
+      const totalDeployed = compositionList.reduce((s, p) => s + p.principal, 0);
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Active Book Composition</h2>
+              <span style="font-size:13px;color:var(--text-dim)">Borrower count by plan type</span>
+            </div>
+          </div>`;
+
+      if (compositionList.length === 0) {
+        html += `
+          <div style="text-align:center;padding:60px 20px">
+            <div style="font-size:48px;margin-bottom:16px">📊</div>
+            <div style="font-size:16px;color:var(--text-dim)">No active loans yet</div>
+          </div>`;
+      } else {
+        html += `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+            <div class="stat-card"><div class="stat-label">Active Loans</div><div class="stat-value" style="color:var(--text)">${activeBorrowers.length}</div></div>
+            <div class="stat-card"><div class="stat-label">Deployed</div><div class="stat-value" style="color:var(--accent);font-size:18px">${fmt(totalDeployed)}</div></div>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;font-weight:600">By Plan</div>
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+            ${compositionList.map((p, i) => {
+              const borderBot = i < compositionList.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+              const pct = Math.round((p.count / activeBorrowers.length) * 100);
+              return `
+            <div style="padding:14px 16px;${borderBot}">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+                <div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text)">${fmt(p.weekly)}/${p.isDaily ? 'day' : 'week'} · ${p.weeks} ${p.isDaily ? 'days' : 'weeks'}${p.isCustom ? ' <span style="font-size:10px;color:var(--text-dim);font-weight:400">(custom)</span>' : ''}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Deployed ${fmt(p.principal)}</div>
+                </div>
+                <div style="text-align:right">
+                  <div class="mono" style="font-size:20px;font-weight:700;color:var(--accent)">${p.count}</div>
+                  <div style="font-size:10px;color:var(--text-dim)">${pct}%</div>
+                </div>
+              </div>
+              <div style="background:var(--bg);border-radius:100px;height:6px;overflow:hidden">
+                <div style="background:linear-gradient(90deg,#a78bfa,#06b6d4);width:${pct}%;height:100%;border-radius:100px"></div>
+              </div>
+            </div>`;
+            }).join('')}
+          </div>`;
+      }
+
+      html += `</div>`;
       app.innerHTML = html;
     }
 
@@ -2455,6 +2501,7 @@
               amount: getBorrowerWeekAmount(b, i),
               isPaid: isWeekPaid(b.weeks[i]),
               weekNum: i + 1,
+              isDaily: !!plan.isDaily,
             });
           }
         }
@@ -2563,7 +2610,7 @@
             <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot}">
               <div>
                 <div style="font-size:14px;font-weight:500;color:var(--text)">${p.name}</div>
-                <div style="font-size:11px;color:${isPast ? 'var(--danger)' : 'var(--text-dim)'}">Week ${p.weekNum} · ${dateStr}${isPast ? ' (past)' : ''}</div>
+                <div style="font-size:11px;color:${isPast ? 'var(--danger)' : 'var(--text-dim)'}">${p.isDaily ? 'Day' : 'Week'} ${p.weekNum} · ${dateStr}${isPast ? ' (past)' : ''}</div>
               </div>
               <div class="mono" style="font-size:14px;font-weight:700;color:${isPast ? 'var(--danger)' : 'var(--warn)'}">${fmt(p.amount)}</div>
             </div>`;
@@ -2587,7 +2634,7 @@
           if (dueDate.getFullYear() === y && dueDate.getMonth() === m-1 && dueDate.getDate() === d) {
             const paid = isWeekPaid(b.weeks[i]);
             const amt = getBorrowerWeekAmount(b, i);
-            lines.push(`${paid ? "✓" : "○"} ${b.name} · Week ${i+1} · ₹${amt.toLocaleString("en-IN")}`);
+            lines.push(`${paid ? "✓" : "○"} ${b.name} · ${plan.isDaily ? 'Day' : 'Week'} ${i+1} · ₹${amt.toLocaleString("en-IN")}`);
           }
         }
       });
@@ -2629,7 +2676,7 @@
           if (dueDate >= now && dueDate <= limit) {
             const amt = getBorrowerWeekAmount(b, i);
             total += amt;
-            items.push({ name: b.name, weekNum: i + 1, amount: amt, dueDate: new Date(dueDate) });
+            items.push({ name: b.name, weekNum: i + 1, amount: amt, dueDate: new Date(dueDate), isDaily: !!plan.isDaily });
           }
         }
       });
@@ -2918,7 +2965,7 @@
             <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot}">
               <div>
                 <div style="font-size:14px;font-weight:500;color:var(--text)">${p.name}</div>
-                <div style="font-size:11px;color:var(--text-dim)">Week ${p.weekNum} · ${dateStr}</div>
+                <div style="font-size:11px;color:var(--text-dim)">${p.isDaily ? 'Day' : 'Week'} ${p.weekNum} · ${dateStr}</div>
               </div>
               <div class="mono" style="font-size:14px;font-weight:700;color:var(--accent)">${fmt(p.amount)}</div>
             </div>`;
@@ -3136,14 +3183,14 @@
             g.items.forEach(it => {
               html += `
               <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
-                <span style="color:var(--text-dim)">${it.name} · Week ${it.weekNum}</span>
+                <span style="color:var(--text-dim)">${it.name} · ${it.isDaily ? 'Day' : 'Week'} ${it.weekNum}</span>
                 <span class="mono" style="color:var(--text-dim)">${fmt(it.amount)}</span>
               </div>`;
             });
           } else {
             const it = g.items[0];
             html += `
-              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${it.name} · Week ${it.weekNum}</div>`;
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${it.name} · ${it.isDaily ? 'Day' : 'Week'} ${it.weekNum}</div>`;
           }
           html += `</div>`;
         });
@@ -3684,32 +3731,50 @@
 
     // Track when the app was last hidden, and re-lock on resume if too much time passed
     let lastHiddenAt = 0;
+    // How long the app can be backgrounded before we reset view state to defaults on resume
+    const VIEW_RESET_MS = 30 * 60 * 1000; // 30 minutes
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         // App is being minimized/backgrounded — record timestamp
         lastHiddenAt = Date.now();
         clearIdleTimer();
       } else {
+        const elapsedWhileHidden = lastHiddenAt > 0 ? Date.now() - lastHiddenAt : 0;
         // App resumed — if a PIN is set and we were hidden longer than the idle threshold, lock
         if (hasPIN() && !appLocked && lastHiddenAt > 0) {
-          const elapsed = Date.now() - lastHiddenAt;
-          if (elapsed >= IDLE_LOCK_MS) {
+          if (elapsedWhileHidden >= IDLE_LOCK_MS) {
             appLocked = true;
             pinInput = "";
             pinError = "";
             pinStage = "enter";
             currentView = "home";
+            // Also reset sort to default so returning user sees most urgent list
+            sortBy = loadSortPref();
+            if (sortBy !== "duesoon") {
+              sortBy = "duesoon";
+              try { localStorage.setItem("creditrack-sort", "duesoon"); } catch (e) {}
+            }
             render();
             lastHiddenAt = 0;
             return;
           }
         }
+        // On any long-ish resume (even without PIN lock) — bring the user back to Home with the
+        // Due Soon sort active, so they're not stuck on an old filter from last session.
+        if (elapsedWhileHidden >= VIEW_RESET_MS) {
+          currentView = "home";
+          selectedId = null;
+          searchQuery = "";
+          selectionMode = false;
+          selectedIds.clear();
+          sortBy = "duesoon";
+          try { localStorage.setItem("creditrack-sort", "duesoon"); } catch (e) {}
+        }
         lastHiddenAt = 0;
-        // Also check idle: if we were hidden for less than lock threshold but activity
-        // has staled overall, still lock
         checkIdleAndLock();
         resetIdleTimer();
         runAutoBackupIfDue();
+        render();
       }
     });
     resetIdleTimer();
