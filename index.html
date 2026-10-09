@@ -305,7 +305,7 @@
     let editingNameId = null;
     // Sort preference: load from localStorage, defaulting to "duesoon"
     // Valid sort values — if a stale/invalid value is stored, fall back to default
-    const VALID_SORTS = ["newest", "oldest", "duesoon", "daily", "name", "balance"];
+    const VALID_SORTS = ["newest", "oldest", "duesoon", "endssoon", "daily", "name", "balance"];
     function loadSortPref() {
       try {
         const stored = localStorage.getItem("creditrack-sort");
@@ -1253,6 +1253,21 @@
           const bDays = getDaysSinceLastPayment(b);
           // Null = no payments yet, treat as 0 (least urgent)
           return (bDays || 0) - (aDays || 0);
+        });
+      } else if (sortBy === "endssoon") {
+        // Rank by fewest remaining slots to complete the plan
+        // Tie-break: earlier expected completion date first
+        list.sort((a, b) => {
+          const planA = getPlan(a);
+          const planB = getPlan(b);
+          const remA = planA.weeks - a.weeks.filter(isWeekPaid).length;
+          const remB = planB.weeks - b.weeks.filter(isWeekPaid).length;
+          if (remA !== remB) return remA - remB;
+          const anchorA = isWeekPaid(a.weeks[0]) ? getWeekDate(a.weeks[0]) : a.createdAt;
+          const anchorB = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
+          const endA = new Date(anchorA); endA.setUTCDate(endA.getUTCDate() + planA.weeks * slotIntervalDays(a));
+          const endB = new Date(anchorB); endB.setUTCDate(endB.getUTCDate() + planB.weeks * slotIntervalDays(b));
+          return endA - endB;
         });
       } else if (sortBy === "name") {
         list.sort((a, b) => a.name.localeCompare(b.name));
@@ -3342,6 +3357,7 @@
             ${chip("Newest", "newest", sortBy === "newest", "setSort")}
             ${chip("Oldest", "oldest", sortBy === "oldest", "setSort")}
             ${chip("Due Soon", "duesoon", sortBy === "duesoon", "setSort")}
+            ${chip("Ends Soon", "endssoon", sortBy === "endssoon", "setSort")}
             ${chip("Daily", "daily", sortBy === "daily", "setSort")}
           </div>`;
       }
