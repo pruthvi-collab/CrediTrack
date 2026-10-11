@@ -944,6 +944,7 @@
     }
     function goArchive() { currentView = "archive"; render(); }
     function goProfit() { currentView = "profit"; render(); }
+    function goProjections() { currentView = "projections"; render(); }
     function goBackups() { currentView = "backups"; render(); }
 
     // ===== BACKUP HISTORY =====
@@ -1494,6 +1495,7 @@
       if (currentView === "cashflow") return renderCashflow(app);
       if (currentView === "composition") return renderComposition(app);
       if (currentView === "inflowproj") return renderInflowProjector(app);
+      if (currentView === "projections") return renderProjections(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
       if (currentView === "backups") return renderBackups(app);
@@ -1625,6 +1627,18 @@
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Rate of Return</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Monthly ROI % per plan and borrower</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+            <div class="card" onclick="goProjections()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(244,114,182,0.15);color:#f472b6">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/><circle cx="19" cy="8" r="1.5" fill="currentColor"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Projections</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">12-month profit forecast + break-even date</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -3213,6 +3227,266 @@
       }
 
       html += `</div>`;
+      app.innerHTML = html;
+    }
+
+    // ===== 12-MONTH PROJECTION =====
+    // Assumption: every active borrower renews on the SAME plan when their current cycle ends.
+    // Profit per slot = plan.profit / plan.weeks; inflow = plan.weekly; outflow at renewal = plan.principal.
+    // Starts a new cycle 1 day after the last-slot expected date.
+    function getProjectionData() {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const startBoundary = new Date(today.getFullYear(), today.getMonth(), 1);
+      const endBoundary = new Date(today.getFullYear(), today.getMonth() + 12, 1); // 12 months out, exclusive end
+
+      // monthKey -> {profit, inflow, outflow}
+      const months = {};
+      const monthLabels = [];
+      for (let i = 0; i < 12; i++) {
+        const dt = new Date(today.getFullYear(), today.getMonth() + i, 1);
+        const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+        months[key] = { profit: 0, inflow: 0, outflow: 0 };
+        monthLabels.push({ key, label: dt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) });
+      }
+
+      // Daily buckets for cumulative Net Outflow tracking (365 days)
+      // Index = day offset from today
+      const dailyIn = new Array(400).fill(0);
+      const dailyOut = new Array(400).fill(0);
+      const msDay = 86400000;
+
+      // Current Net Outflow baseline: sum of (principal - received) across ALL borrowers
+      // (completed loans contribute 0 since received == total >= principal)
+      let currentNetOutflow = 0;
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        const received = calcReceived(b);
+        currentNetOutflow += plan.principal - received;
+      });
+
+      const activeBorrowers = borrowers.filter(b => !b.weeks.every(isWeekPaid));
+
+      activeBorrowers.forEach(b => {
+        const plan = getPlan(b);
+        if (!plan || plan.weeks <= 0) return;
+        const interval = slotIntervalDays(b);
+        const profitPerSlot = plan.profit / plan.weeks;
+
+        // Anchor on Week 1 paid date if present, else createdAt
+        const week1 = b.weeks[0];
+        const anchorISO = isWeekPaid(week1) ? getWeekDate(week1) : b.createdAt;
+        const anchor = new Date(anchorISO);
+        anchor.setHours(0, 0, 0, 0);
+        const paidSlots = b.weeks.filter(isWeekPaid).length;
+
+        // 1) Remaining slots in current cycle
+        for (let i = paidSlots; i < plan.weeks; i++) {
+          const due = new Date(anchor.getTime() + i * interval * msDay);
+          const payDate = due < today ? new Date(today) : due;
+          if (payDate >= endBoundary) break;
+          const k = `${payDate.getFullYear()}-${String(payDate.getMonth() + 1).padStart(2, '0')}`;
+          if (months[k]) {
+            months[k].profit += profitPerSlot;
+            months[k].inflow += getBorrowerWeekAmount(b, i);
+          }
+          const dayIdx = Math.floor((payDate - today) / msDay);
+          if (dayIdx >= 0 && dayIdx < dailyIn.length) dailyIn[dayIdx] += getBorrowerWeekAmount(b, i);
+        }
+
+        // 2) Chain renewals on the SAME plan
+        const lastSlot = new Date(anchor.getTime() + (plan.weeks - 1) * interval * msDay);
+        let cycleStart = new Date(Math.max(lastSlot.getTime(), today.getTime() - msDay) + msDay);
+        while (cycleStart < endBoundary) {
+          // Outflow on renewal day
+          const outK = `${cycleStart.getFullYear()}-${String(cycleStart.getMonth() + 1).padStart(2, '0')}`;
+          if (months[outK]) months[outK].outflow += plan.principal;
+          const outDayIdx = Math.floor((cycleStart - today) / msDay);
+          if (outDayIdx >= 0 && outDayIdx < dailyOut.length) dailyOut[outDayIdx] += plan.principal;
+
+          // Slots in this new cycle (first collection is interval days after disbursement)
+          for (let i = 0; i < plan.weeks; i++) {
+            const due = new Date(cycleStart.getTime() + (i + 1) * interval * msDay);
+            if (due >= endBoundary) break;
+            const k = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}`;
+            if (months[k]) {
+              months[k].profit += profitPerSlot;
+              months[k].inflow += plan.weekly;
+            }
+            const dayIdx = Math.floor((due - today) / msDay);
+            if (dayIdx >= 0 && dayIdx < dailyIn.length) dailyIn[dayIdx] += plan.weekly;
+          }
+
+          // Next cycle starts 1 day after this cycle's last slot
+          cycleStart = new Date(cycleStart.getTime() + (plan.weeks * interval + 1) * msDay);
+        }
+      });
+
+      // Walk day-by-day to find when Cumulative Net Outflow first touches 0 and when it stays green 30+ days
+      let cum = currentNetOutflow;
+      let firstZero = null;
+      let permZero = null;
+      let runNeg = 0;
+      for (let d = 0; d < dailyIn.length; d++) {
+        cum += dailyOut[d] - dailyIn[d];
+        if (cum <= 0) {
+          if (firstZero === null) {
+            firstZero = new Date(today.getTime() + d * msDay);
+          }
+          runNeg++;
+          if (runNeg >= 30 && permZero === null) {
+            permZero = new Date(today.getTime() + (d - 29) * msDay);
+          }
+        } else {
+          runNeg = 0;
+        }
+      }
+
+      // Monthly table rows
+      const rows = monthLabels.map(ml => ({
+        key: ml.key,
+        label: ml.label,
+        profit: months[ml.key].profit,
+        inflow: months[ml.key].inflow,
+        outflow: months[ml.key].outflow,
+        net: months[ml.key].inflow - months[ml.key].outflow,
+      }));
+      const totalProfit = rows.reduce((s, r) => s + r.profit, 0);
+      const totalInflow = rows.reduce((s, r) => s + r.inflow, 0);
+      const totalOutflow = rows.reduce((s, r) => s + r.outflow, 0);
+      const totalNet = totalInflow - totalOutflow;
+
+      return {
+        rows,
+        totalProfit, totalInflow, totalOutflow, totalNet,
+        avgMonthlyProfit: totalProfit / 12,
+        currentNetOutflow,
+        firstZero,
+        permZero,
+      };
+    }
+
+    function fmtDMY(d) {
+      if (!d) return "—";
+      return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function renderProjections(app) {
+      const activeCount = borrowers.filter(b => !b.weeks.every(isWeekPaid)).length;
+
+      if (activeCount === 0) {
+        app.innerHTML = `
+          <div class="fade-in">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+              <button class="back-btn" onclick="goMenu()">←</button>
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Projections</h2>
+            </div>
+            <div style="text-align:center;padding:60px 20px">
+              <div style="font-size:48px;margin-bottom:16px">📈</div>
+              <div style="font-size:16px;color:var(--text-dim)">No active borrowers to project</div>
+            </div>
+          </div>`;
+        return;
+      }
+
+      const p = getProjectionData();
+      const netColor = (n) => n < 0 ? 'var(--danger)' : (n > 0 ? 'var(--success)' : 'var(--text-dim)');
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Projections</h2>
+              <span style="font-size:12px;color:var(--text-dim)">Next 12 months · same plan on renewal</span>
+            </div>
+          </div>
+
+          <!-- Headline card -->
+          <div style="background:var(--card-alt);border-radius:14px;padding:20px;margin-bottom:14px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">12-month projected profit</div>
+            <div class="mono" style="font-size:32px;font-weight:700;color:var(--accent)">${fmt(Math.round(p.totalProfit))}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Avg ${fmt(Math.round(p.avgMonthlyProfit))}/month · ${activeCount} active ${activeCount === 1 ? 'borrower' : 'borrowers'}</div>
+          </div>
+
+          <!-- Break-even card -->
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:16px;margin-bottom:20px">
+            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:12px">Cumulative Net Outflow</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+              <div class="stat-card"><div class="stat-label">Current</div><div class="stat-value" style="color:${p.currentNetOutflow > 0 ? 'var(--warn)' : 'var(--success)'}">${fmt(p.currentNetOutflow)}</div></div>
+              <div class="stat-card"><div class="stat-label">Status</div><div class="stat-value" style="font-size:13px;color:${p.currentNetOutflow <= 0 ? 'var(--success)' : 'var(--warn)'}">${p.currentNetOutflow <= 0 ? '✓ Green now' : 'In the red'}</div></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--card-alt);border-radius:10px">
+                <div>
+                  <div style="font-size:12px;color:var(--text-dim)">First dips to zero</div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text);margin-top:2px">${fmtDMY(p.firstZero)}</div>
+                </div>
+                <div style="font-size:20px">⚡</div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;background:var(--card-alt);border-radius:10px">
+                <div>
+                  <div style="font-size:12px;color:var(--text-dim)">Stays green permanently</div>
+                  <div style="font-size:14px;font-weight:600;color:var(--success);margin-top:2px">${fmtDMY(p.permZero)}</div>
+                </div>
+                <div style="font-size:20px">🟢</div>
+              </div>
+            </div>
+            <div style="font-size:11px;color:var(--text-dim);margin-top:10px;line-height:1.5">Green = you've received everything you've lent out. Permanent threshold = stays at or below zero for 30+ consecutive days.</div>
+          </div>
+
+          <!-- Monthly table -->
+          <div style="background:var(--card);border-radius:14px;border:1px solid var(--border);padding:16px;margin-bottom:16px">
+            <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:12px">Month-by-month breakdown</div>
+            <div style="overflow-x:auto;-webkit-overflow-scrolling:touch">
+              <table class="mono" style="width:100%;border-collapse:collapse;font-size:11px">
+                <thead>
+                  <tr style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px">
+                    <th style="text-align:left;padding:8px 6px;font-weight:500">Month</th>
+                    <th style="text-align:right;padding:8px 6px;font-weight:500">Profit</th>
+                    <th style="text-align:right;padding:8px 6px;font-weight:500">Inflow</th>
+                    <th style="text-align:right;padding:8px 6px;font-weight:500">Outflow</th>
+                    <th style="text-align:right;padding:8px 6px;font-weight:500">Net Cash</th>
+                  </tr>
+                </thead>
+                <tbody>`;
+
+      p.rows.forEach((r, idx) => {
+        const bg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
+        html += `
+                  <tr style="background:${bg}">
+                    <td style="padding:8px 6px;color:var(--text);font-weight:500;font-family:'DM Sans',sans-serif;font-size:12px">${r.label}</td>
+                    <td style="padding:8px 6px;text-align:right;color:var(--accent)">${fmt(Math.round(r.profit))}</td>
+                    <td style="padding:8px 6px;text-align:right;color:var(--text)">${fmt(Math.round(r.inflow))}</td>
+                    <td style="padding:8px 6px;text-align:right;color:var(--text-dim)">${fmt(Math.round(r.outflow))}</td>
+                    <td style="padding:8px 6px;text-align:right;color:${netColor(r.net)}">${fmt(Math.round(r.net))}</td>
+                  </tr>`;
+      });
+
+      html += `
+                </tbody>
+                <tfoot>
+                  <tr style="border-top:1px solid var(--border);font-weight:600">
+                    <td style="padding:10px 6px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px">Total</td>
+                    <td style="padding:10px 6px;text-align:right;color:var(--accent)">${fmt(Math.round(p.totalProfit))}</td>
+                    <td style="padding:10px 6px;text-align:right;color:var(--text)">${fmt(Math.round(p.totalInflow))}</td>
+                    <td style="padding:10px 6px;text-align:right;color:var(--text-dim)">${fmt(Math.round(p.totalOutflow))}</td>
+                    <td style="padding:10px 6px;text-align:right;color:${netColor(p.totalNet)}">${fmt(Math.round(p.totalNet))}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-dim);padding:0 4px 20px;line-height:1.6">
+            <strong style="color:var(--text)">Notes:</strong><br>
+            · <em>Profit</em> accrues per paid slot (plan profit ÷ weeks); not actual cash earned until collected.<br>
+            · <em>Inflow</em> = weekly collections. <em>Outflow</em> = principal re-lent when a borrower renews.<br>
+            · <em>Net cash</em> = Inflow − Outflow. Can be negative in renewal-heavy months.<br>
+            · Overdue slots are assumed paid today; future slots on their expected due dates.
+          </div>
+        </div>`;
+
       app.innerHTML = html;
     }
 
