@@ -3250,6 +3250,23 @@
         monthLabels.push({ key, label: dt.toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) });
       }
 
+      // CURRENT MONTH: match the Cash Flow screen exactly — Earned + Projected (current cycle only).
+      // We overwrite months[curMonthKey].profit later; the inflow seed below is only for display.
+      const curMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+      borrowers.forEach(b => {
+        const plan = getPlan(b);
+        if (!plan || plan.weeks <= 0) return;
+        b.weeks.forEach((w, i) => {
+          if (!isWeekPaid(w)) return;
+          const ds = getWeekDate(w);
+          if (!ds) return;
+          const dt = new Date(ds);
+          if (dt.getFullYear() === today.getFullYear() && dt.getMonth() === today.getMonth()) {
+            months[curMonthKey].inflow += getBorrowerWeekAmount(b, i);
+          }
+        });
+      });
+
       // Daily buckets for cumulative Net Outflow tracking (365 days)
       // Index = day offset from today
       const dailyIn = new Array(400).fill(0);
@@ -3280,16 +3297,19 @@
         anchor.setHours(0, 0, 0, 0);
         const paidSlots = b.weeks.filter(isWeekPaid).length;
 
-        // 1) Remaining slots in current cycle
+        // 1) Remaining slots in current cycle — book each on its ORIGINAL due date.
+        // Overdue slots (due in a past month) are skipped from monthly buckets.
+        // Current-month profit is handled separately below (via Cash Flow functions).
         for (let i = paidSlots; i < plan.weeks; i++) {
           const due = new Date(anchor.getTime() + i * interval * msDay);
-          const payDate = due < today ? new Date(today) : due;
-          if (payDate >= endBoundary) break;
-          const k = `${payDate.getFullYear()}-${String(payDate.getMonth() + 1).padStart(2, '0')}`;
-          if (months[k]) {
+          if (due >= endBoundary) break;
+          const k = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}`;
+          if (months[k] && k !== curMonthKey) {
             months[k].profit += profitPerSlot;
             months[k].inflow += getBorrowerWeekAmount(b, i);
           }
+          // Cumulative Net Outflow tracking (overdue cash parked on today).
+          const payDate = due < today ? new Date(today) : due;
           const dayIdx = Math.floor((payDate - today) / msDay);
           if (dayIdx >= 0 && dayIdx < dailyIn.length) dailyIn[dayIdx] += getBorrowerWeekAmount(b, i);
         }
@@ -3305,11 +3325,14 @@
           if (outDayIdx >= 0 && outDayIdx < dailyOut.length) dailyOut[outDayIdx] += plan.principal;
 
           // Slots in this new cycle (first collection is interval days after disbursement)
+          // SKIP renewal-cycle slots in the CURRENT month for monthly table — the Cash Flow screen
+          // treats the current month as "Earned + current-cycle unpaid only", so we match that.
+          // Cumulative Net Outflow (daily buckets) still tracks every renewal inflow.
           for (let i = 0; i < plan.weeks; i++) {
             const due = new Date(cycleStart.getTime() + (i + 1) * interval * msDay);
             if (due >= endBoundary) break;
             const k = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}`;
-            if (months[k]) {
+            if (months[k] && k !== curMonthKey) {
               months[k].profit += profitPerSlot;
               months[k].inflow += plan.weekly;
             }
@@ -3321,6 +3344,17 @@
           cycleStart = new Date(cycleStart.getTime() + (plan.weeks * interval + 1) * msDay);
         }
       });
+
+      // Overwrite CURRENT-MONTH profit with the Cash Flow screen's exact numbers:
+      // Earned (sum of paid-slot profit for this month) + Projected (unpaid current-cycle slots due this month).
+      // This guarantees Projections and Cash Flow show the same current-month profit.
+      try {
+        const earned = getMonthlyProfitShare().find(m => m.key === curMonthKey);
+        const projected = getProjectedMonthlyProfitShare(0).find(m => m.key === curMonthKey);
+        const earnedProfit = earned ? earned.profit : 0;
+        const projectedProfit = projected ? projected.profit : 0;
+        months[curMonthKey].profit = earnedProfit + projectedProfit;
+      } catch (e) { /* fall back to simulation value */ }
 
       // Walk day-by-day to find when Cumulative Net Outflow first touches 0 and when it stays green 30+ days
       let cum = currentNetOutflow;
