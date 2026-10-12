@@ -3356,7 +3356,8 @@
         months[curMonthKey].profit = earnedProfit + projectedProfit;
       } catch (e) { /* fall back to simulation value */ }
 
-      // Walk day-by-day to find when Cumulative Net Outflow first touches 0 and when it stays green 30+ days
+      // Walk day-by-day: find break-even dates AND capture month-end cumulative Net Outflow
+      const monthEndCum = {}; // key → cum at month-end
       let cum = currentNetOutflow;
       let firstZero = null;
       let permZero = null;
@@ -3374,9 +3375,16 @@
         } else {
           runNeg = 0;
         }
+        // Snapshot cumulative at the LAST day of each month
+        const curDay = new Date(today.getTime() + d * msDay);
+        const nextDay = new Date(today.getTime() + (d + 1) * msDay);
+        if (curDay.getMonth() !== nextDay.getMonth()) {
+          const mk = `${curDay.getFullYear()}-${String(curDay.getMonth() + 1).padStart(2, '0')}`;
+          monthEndCum[mk] = cum;
+        }
       }
 
-      // Monthly table rows
+      // Monthly table rows (Profit + Cum Net Outflow at month-end)
       const rows = monthLabels.map(ml => ({
         key: ml.key,
         label: ml.label,
@@ -3384,6 +3392,7 @@
         inflow: months[ml.key].inflow,
         outflow: months[ml.key].outflow,
         net: months[ml.key].inflow - months[ml.key].outflow,
+        cumNetOutflow: monthEndCum[ml.key] !== undefined ? monthEndCum[ml.key] : null,
       }));
       const totalProfit = rows.reduce((s, r) => s + r.profit, 0);
       const totalInflow = rows.reduce((s, r) => s + r.inflow, 0);
@@ -3478,22 +3487,20 @@
                   <tr style="color:var(--text-dim);font-size:10px;text-transform:uppercase;letter-spacing:0.5px">
                     <th style="text-align:left;padding:8px 6px;font-weight:500">Month</th>
                     <th style="text-align:right;padding:8px 6px;font-weight:500">Profit</th>
-                    <th style="text-align:right;padding:8px 6px;font-weight:500">Inflow</th>
-                    <th style="text-align:right;padding:8px 6px;font-weight:500">Outflow</th>
-                    <th style="text-align:right;padding:8px 6px;font-weight:500">Net Cash</th>
+                    <th style="text-align:right;padding:8px 6px;font-weight:500">Cum Net Outflow</th>
                   </tr>
                 </thead>
                 <tbody>`;
 
       p.rows.forEach((r, idx) => {
         const bg = idx % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.02)';
+        const cumColor = r.cumNetOutflow === null ? 'var(--text-dim)' : (r.cumNetOutflow <= 0 ? 'var(--success)' : 'var(--warn)');
+        const cumText = r.cumNetOutflow === null ? '—' : fmt(Math.round(r.cumNetOutflow));
         html += `
                   <tr style="background:${bg}">
                     <td style="padding:8px 6px;color:var(--text);font-weight:500;font-family:'DM Sans',sans-serif;font-size:12px">${r.label}</td>
                     <td style="padding:8px 6px;text-align:right;color:var(--accent)">${fmt(Math.round(r.profit))}</td>
-                    <td style="padding:8px 6px;text-align:right;color:var(--text)">${fmt(Math.round(r.inflow))}</td>
-                    <td style="padding:8px 6px;text-align:right;color:var(--text-dim)">${fmt(Math.round(r.outflow))}</td>
-                    <td style="padding:8px 6px;text-align:right;color:${netColor(r.net)}">${fmt(Math.round(r.net))}</td>
+                    <td style="padding:8px 6px;text-align:right;color:${cumColor}">${cumText}</td>
                   </tr>`;
       });
 
@@ -3501,11 +3508,9 @@
                 </tbody>
                 <tfoot>
                   <tr style="border-top:1px solid var(--border);font-weight:600">
-                    <td style="padding:10px 6px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px">Total</td>
+                    <td style="padding:10px 6px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px">Total profit</td>
                     <td style="padding:10px 6px;text-align:right;color:var(--accent)">${fmt(Math.round(p.totalProfit))}</td>
-                    <td style="padding:10px 6px;text-align:right;color:var(--text)">${fmt(Math.round(p.totalInflow))}</td>
-                    <td style="padding:10px 6px;text-align:right;color:var(--text-dim)">${fmt(Math.round(p.totalOutflow))}</td>
-                    <td style="padding:10px 6px;text-align:right;color:${netColor(p.totalNet)}">${fmt(Math.round(p.totalNet))}</td>
+                    <td style="padding:10px 6px;text-align:right;color:var(--text-dim)">—</td>
                   </tr>
                 </tfoot>
               </table>
@@ -3515,9 +3520,9 @@
           <div style="font-size:11px;color:var(--text-dim);padding:0 4px 20px;line-height:1.6">
             <strong style="color:var(--text)">Notes:</strong><br>
             · <em>Profit</em> accrues per paid slot (plan profit ÷ weeks); not actual cash earned until collected.<br>
-            · <em>Inflow</em> = weekly collections. <em>Outflow</em> = principal re-lent when a borrower renews.<br>
-            · <em>Net cash</em> = Inflow − Outflow. Can be negative in renewal-heavy months.<br>
-            · Overdue slots are assumed paid today; future slots on their expected due dates.
+            · <em>Cum Net Outflow</em> = running balance at month-end (lent − received). Green when ≤ 0.<br>
+            · Overdue slots are assumed paid today; future slots on their expected due dates.<br>
+            · Assumes each borrower renews on the same plan when their cycle ends.
           </div>
         </div>`;
 
