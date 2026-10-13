@@ -314,6 +314,24 @@
       return "duesoon";
     }
     let sortBy = loadSortPref();
+
+    // Projection scenario — persisted across sessions
+    const VALID_SCENARIOS = ["same", "upgrade"];
+    function loadScenarioPref() {
+      try {
+        const s = localStorage.getItem("creditrack-scenario");
+        if (s && VALID_SCENARIOS.indexOf(s) !== -1) return s;
+      } catch (e) {}
+      return "same";
+    }
+    let projectionScenario = loadScenarioPref();
+    function setProjectionScenario(s) {
+      if (VALID_SCENARIOS.indexOf(s) === -1) return;
+      projectionScenario = s;
+      try { localStorage.setItem("creditrack-scenario", s); } catch (e) {}
+      render();
+    }
+
     let filterBy = "all";  // all, active, completed
     let searchQuery = "";
     let appLocked = false;
@@ -3231,10 +3249,59 @@
     }
 
     // ===== 12-MONTH PROJECTION =====
-    // Assumption: every active borrower renews on the SAME plan when their current cycle ends.
+    // Scenario-aware: "same" renews each borrower on their current plan;
+    // "upgrade" moves half of 5K/15w to 10K/10w, other half to 5K/10w, and all 3500 → 5K/10w.
     // Profit per slot = plan.profit / plan.weeks; inflow = plan.weekly; outflow at renewal = plan.principal.
     // Starts a new cycle 1 day after the last-slot expected date.
-    function getProjectionData() {
+
+    // Classify a borrower's current plan to a key used for scenario mapping.
+    function classifyPlanKey(b) {
+      const p = getPlan(b);
+      if (!p) return null;
+      if (b.customPlan) return 'custom';
+      if (p.isDaily) return '1000_daily';
+      if (p.weekly === 20000 && p.weeks === 10) return '20000_10';
+      if (p.weekly === 10000 && p.weeks === 10) return '10000_10';
+      if (p.weekly === 10000 && p.weeks === 15) return '10000';
+      if (p.weekly === 5000 && p.weeks === 10) return '5000_10';
+      if (p.weekly === 5000 && p.weeks === 15) return '5000';
+      if (p.weekly === 3500) return '3500';
+      return 'other';
+    }
+
+    // Build a per-borrower renewal plan for the given scenario.
+    // Returns Map<borrowerId, {planObj, planKey}>.
+    function buildRenewalMap(scenario) {
+      const map = new Map();
+      const active = borrowers.filter(b => !b.weeks.every(isWeekPaid));
+      // Group 5K/15w borrowers so we can split them half-and-half
+      const fiveKgroup = [];
+      active.forEach(b => {
+        if (classifyPlanKey(b) === '5000') fiveKgroup.push(b);
+      });
+      // Sort for determinism (by id) so the split is stable across renders
+      fiveKgroup.sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      const half = Math.floor(fiveKgroup.length / 2);
+      const fiveKUpgrade = new Set(fiveKgroup.slice(0, half).map(b => b.id)); // → 10K/10w
+
+      active.forEach(b => {
+        const curKey = classifyPlanKey(b);
+        let renewed = getPlan(b); // default same plan
+        if (scenario === 'upgrade') {
+          if (curKey === '5000') {
+            renewed = fiveKUpgrade.has(b.id) ? PLANS['10000_10'] : PLANS['5000_10'];
+          } else if (curKey === '3500') {
+            renewed = PLANS['5000_10'];
+          }
+        }
+        map.set(b.id, renewed);
+      });
+      return map;
+    }
+
+    function getProjectionData(scenario) {
+      scenario = scenario || 'same';
+      const renewalPlanMap = buildRenewalMap(scenario);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const startBoundary = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -3314,34 +3381,38 @@
           if (dayIdx >= 0 && dayIdx < dailyIn.length) dailyIn[dayIdx] += getBorrowerWeekAmount(b, i);
         }
 
-        // 2) Chain renewals on the SAME plan
+        // 2) Chain renewals using the SCENARIO's renewed plan (same plan OR upgraded plan)
+        const renewedPlan = renewalPlanMap.get(b.id) || plan;
+        const renewedInterval = renewedPlan.isDaily ? 1 : 7;
+        const renewedPPS = renewedPlan.profit / renewedPlan.weeks;
+
         const lastSlot = new Date(anchor.getTime() + (plan.weeks - 1) * interval * msDay);
         let cycleStart = new Date(Math.max(lastSlot.getTime(), today.getTime() - msDay) + msDay);
         while (cycleStart < endBoundary) {
-          // Outflow on renewal day
+          // Outflow on renewal day (uses renewed plan's principal)
           const outK = `${cycleStart.getFullYear()}-${String(cycleStart.getMonth() + 1).padStart(2, '0')}`;
-          if (months[outK]) months[outK].outflow += plan.principal;
+          if (months[outK]) months[outK].outflow += renewedPlan.principal;
           const outDayIdx = Math.floor((cycleStart - today) / msDay);
-          if (outDayIdx >= 0 && outDayIdx < dailyOut.length) dailyOut[outDayIdx] += plan.principal;
+          if (outDayIdx >= 0 && outDayIdx < dailyOut.length) dailyOut[outDayIdx] += renewedPlan.principal;
 
           // Slots in this new cycle (first collection is interval days after disbursement)
           // SKIP renewal-cycle slots in the CURRENT month for monthly table — the Cash Flow screen
           // treats the current month as "Earned + current-cycle unpaid only", so we match that.
           // Cumulative Net Outflow (daily buckets) still tracks every renewal inflow.
-          for (let i = 0; i < plan.weeks; i++) {
-            const due = new Date(cycleStart.getTime() + (i + 1) * interval * msDay);
+          for (let i = 0; i < renewedPlan.weeks; i++) {
+            const due = new Date(cycleStart.getTime() + (i + 1) * renewedInterval * msDay);
             if (due >= endBoundary) break;
             const k = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, '0')}`;
             if (months[k] && k !== curMonthKey) {
-              months[k].profit += profitPerSlot;
-              months[k].inflow += plan.weekly;
+              months[k].profit += renewedPPS;
+              months[k].inflow += renewedPlan.weekly;
             }
             const dayIdx = Math.floor((due - today) / msDay);
-            if (dayIdx >= 0 && dayIdx < dailyIn.length) dailyIn[dayIdx] += plan.weekly;
+            if (dayIdx >= 0 && dayIdx < dailyIn.length) dailyIn[dayIdx] += renewedPlan.weekly;
           }
 
           // Next cycle starts 1 day after this cycle's last slot
-          cycleStart = new Date(cycleStart.getTime() + (plan.weeks * interval + 1) * msDay);
+          cycleStart = new Date(cycleStart.getTime() + (renewedPlan.weeks * renewedInterval + 1) * msDay);
         }
       });
 
@@ -3406,8 +3477,14 @@
         currentNetOutflow,
         firstZero,
         permZero,
+        scenario,
       };
     }
+
+    const SCENARIO_META = {
+      same:    { label: 'Same plan',    tagline: 'Everyone renews on current plan' },
+      upgrade: { label: 'Upgrade mix',  tagline: '½ of ₹5K/15w → ₹10K/10w · rest + ₹3,500 → ₹5K/10w' },
+    };
 
     function fmtDMY(d) {
       if (!d) return "—";
@@ -3432,18 +3509,26 @@
         return;
       }
 
-      const p = getProjectionData();
+      const p = getProjectionData(projectionScenario);
+      const meta = SCENARIO_META[projectionScenario] || SCENARIO_META.same;
       const netColor = (n) => n < 0 ? 'var(--danger)' : (n > 0 ? 'var(--success)' : 'var(--text-dim)');
 
       let html = `
         <div class="fade-in">
-          <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
             <button class="back-btn" onclick="goMenu()">←</button>
             <div style="flex:1">
               <h2 style="font-size:22px;font-weight:700;color:var(--text)">Projections</h2>
-              <span style="font-size:12px;color:var(--text-dim)">Next 12 months · same plan on renewal</span>
+              <span style="font-size:12px;color:var(--text-dim)">Next 12 months</span>
             </div>
           </div>
+
+          <!-- Scenario chips -->
+          <div style="display:flex;gap:6px;margin-bottom:10px;overflow-x:auto;padding-bottom:4px">
+            ${chip('Same plan', 'same', projectionScenario === 'same', 'setProjectionScenario')}
+            ${chip('Upgrade mix', 'upgrade', projectionScenario === 'upgrade', 'setProjectionScenario')}
+          </div>
+          <div style="font-size:11px;color:var(--text-dim);margin-bottom:14px;padding:0 4px;line-height:1.5">${meta.tagline}</div>
 
           <!-- Headline card -->
           <div style="background:var(--card-alt);border-radius:14px;padding:20px;margin-bottom:14px">
@@ -3522,7 +3607,7 @@
             · <em>Profit</em> accrues per paid slot (plan profit ÷ weeks); not actual cash earned until collected.<br>
             · <em>Cum Net Outflow</em> = running balance at month-end (lent − received). Green when ≤ 0.<br>
             · Overdue slots are assumed paid today; future slots on their expected due dates.<br>
-            · Assumes each borrower renews on the same plan when their cycle ends.
+            · Renewal assumption: ${meta.tagline.toLowerCase()}.
           </div>
         </div>`;
 
