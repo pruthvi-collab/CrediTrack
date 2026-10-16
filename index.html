@@ -1513,6 +1513,7 @@
       if (currentView === "cashflow") return renderCashflow(app);
       if (currentView === "composition") return renderComposition(app);
       if (currentView === "inflowproj") return renderInflowProjector(app);
+      if (currentView === "renewaloutflow") return renderRenewalOutflow(app);
       if (currentView === "projections") return renderProjections(app);
       if (currentView === "archive") return renderArchive(app);
       if (currentView === "profit") return renderProfit(app);
@@ -1633,6 +1634,18 @@
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Inflow Projector</div>
                   <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Custom-day expected collections</div>
+                </div>
+                <span style="color:var(--text-dim);font-size:18px">›</span>
+              </div>
+            </div>
+            <div class="card" onclick="goRenewalOutflow()">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div class="menu-icon" style="background:rgba(251,146,60,0.15);color:#fb923c">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/><path d="M3 12a9 9 0 0 1 18 0" stroke-dasharray="2 2"/></svg>
+                </div>
+                <div style="flex:1">
+                  <div style="font-size:16px;font-weight:600;color:var(--text)">Renewal Outflow</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Principal needed for upcoming renewals</div>
                 </div>
                 <span style="color:var(--text-dim);font-size:18px">›</span>
               </div>
@@ -2491,6 +2504,28 @@
     let cashflowTab = "monthly"; // "inflow", "breakdown", "monthly"
     // Inflow Projector: user picks a target date (YYYY-MM-DD). Default = +7 days.
     let inflowTargetDate = ""; // ISO date string like "2026-09-18"
+    let renewalTargetDate = ""; // ISO date string for Renewal Outflow screen
+    function setRenewalTargetDate(d) {
+      renewalTargetDate = d || "";
+      render();
+    }
+    function setRenewalDaysPreset(n) {
+      const target = new Date();
+      target.setHours(0, 0, 0, 0);
+      target.setDate(target.getDate() + n);
+      renewalTargetDate = target.toISOString().slice(0, 10);
+      render();
+    }
+    function goRenewalOutflow() {
+      if (!renewalTargetDate) {
+        const target = new Date();
+        target.setHours(0, 0, 0, 0);
+        target.setDate(target.getDate() + 30);
+        renewalTargetDate = target.toISOString().slice(0, 10);
+      }
+      currentView = "renewaloutflow";
+      render();
+    }
     function setInflowTargetDate(d) {
       inflowTargetDate = d || "";
       render();
@@ -3245,6 +3280,171 @@
       }
 
       html += `</div>`;
+      app.innerHTML = html;
+    }
+
+    // ===== RENEWAL OUTFLOW FORECAST =====
+    // For each active borrower, compute the day their current cycle completes (last-slot date).
+    // If the next cycle would start (= last-slot + 1 day) on or before the target date,
+    // they need their current plan's principal re-lent on that day.
+    // Groups renewals into ISO weeks (Mon-start) ending on or before the target.
+    function getRenewalOutflowData(targetIso) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = targetIso ? new Date(targetIso + "T00:00:00") : today;
+      target.setHours(0, 0, 0, 0);
+      const msDay = 86400000;
+
+      const renewals = []; // {name, cycleEnd, renewStart, principal, planLabel}
+      borrowers.filter(b => !b.weeks.every(isWeekPaid)).forEach(b => {
+        const plan = getPlan(b);
+        if (!plan || plan.weeks <= 0) return;
+        const interval = slotIntervalDays(b);
+        const w1 = b.weeks[0];
+        const anchorIso = isWeekPaid(w1) ? getWeekDate(w1) : b.createdAt;
+        const anchor = new Date(anchorIso);
+        anchor.setHours(0, 0, 0, 0);
+        const cycleEnd = new Date(anchor.getTime() + (plan.weeks - 1) * interval * msDay);
+        const renewStart = new Date(cycleEnd.getTime() + msDay);
+        if (renewStart <= target) {
+          const label = plan.isDaily
+            ? `₹${plan.weekly}/day · ${plan.weeks}d`
+            : (b.customPlan ? `Custom · ₹${plan.weekly}/w · ${plan.weeks}w` : `₹${plan.weekly}/w · ${plan.weeks}w`);
+          renewals.push({
+            id: b.id,
+            name: b.name,
+            cycleEnd,
+            renewStart,
+            principal: plan.principal,
+            planLabel: label,
+          });
+        }
+      });
+
+      // Sort by renewStart ascending
+      renewals.sort((a, b) => a.renewStart - b.renewStart);
+
+      // Group into ISO weeks (Mon-start) based on renewStart
+      // weekKey = YYYY-MM-DD of that week's Monday
+      const groups = new Map();
+      renewals.forEach(r => {
+        const d = new Date(r.renewStart);
+        d.setHours(0, 0, 0, 0);
+        // Shift to Monday of that week
+        const dow = (d.getDay() + 6) % 7; // 0 = Mon, …, 6 = Sun
+        const weekStart = new Date(d.getTime() - dow * msDay);
+        const weekEnd = new Date(weekStart.getTime() + 6 * msDay);
+        const key = weekStart.toISOString().slice(0, 10);
+        if (!groups.has(key)) {
+          groups.set(key, { weekStart, weekEnd, items: [], total: 0 });
+        }
+        const g = groups.get(key);
+        g.items.push(r);
+        g.total += r.principal;
+      });
+
+      const weekGroups = Array.from(groups.values()).sort((a, b) => a.weekStart - b.weekStart);
+      const totalPrincipal = renewals.reduce((s, r) => s + r.principal, 0);
+      const uniqueBorrowers = new Set(renewals.map(r => r.id)).size;
+
+      return {
+        today, target,
+        renewals, weekGroups,
+        totalPrincipal, uniqueBorrowers,
+      };
+    }
+
+    function renderRenewalOutflow(app) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const target = renewalTargetDate ? new Date(renewalTargetDate + "T00:00:00") : today;
+      target.setHours(0, 0, 0, 0);
+      const days = Math.max(0, Math.round((target - today) / (24 * 60 * 60 * 1000)));
+      const data = getRenewalOutflowData(renewalTargetDate);
+
+      const todayIso = today.toISOString().slice(0, 10);
+      const targetLabel = target.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
+      const presets = [7, 15, 30, 60, 90];
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">Renewal Outflow</h2>
+              <span style="font-size:13px;color:var(--text-dim)">Principal needed for upcoming renewals</span>
+            </div>
+          </div>
+
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px">
+            <label style="display:block;font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">Through date</label>
+            <input id="renewalDateInput" type="date" min="${todayIso}" value="${renewalTargetDate}" onchange="setRenewalTargetDate(this.value)" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:12px 14px;font-size:16px;font-weight:600;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box;margin-bottom:12px" />
+            <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">Quick pick:</div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px">`;
+      presets.forEach(p => {
+        const active = days === p;
+        html += `<button onclick="setRenewalDaysPreset(${p})" style="background:${active ? 'var(--accent)' : 'var(--card-alt)'};color:${active ? 'var(--fab-text)' : 'var(--text-dim)'};border:none;border-radius:100px;padding:6px 14px;font-size:12px;font-weight:${active ? 700 : 500};cursor:pointer;font-family:'DM Sans',sans-serif">${p}d</button>`;
+      });
+      html += `
+            </div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:20px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Principal needed · Through ${targetLabel}</div>
+            <div class="mono" style="font-size:32px;font-weight:700;color:var(--warn)">${fmt(data.totalPrincipal)}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:4px">${data.renewals.length} renewal${data.renewals.length === 1 ? '' : 's'} from ${data.uniqueBorrowers} borrower${data.uniqueBorrowers === 1 ? '' : 's'} · Next ${days} day${days === 1 ? '' : 's'}</div>
+          </div>`;
+
+      if (data.weekGroups.length === 0) {
+        html += `
+          <div style="text-align:center;padding:40px 20px">
+            <div style="font-size:14px;color:var(--text-dim)">No renewals expected through ${targetLabel}</div>
+            <div style="font-size:12px;color:var(--text-dim);margin-top:6px">Pick a longer window to see upcoming cycles finishing.</div>
+          </div>`;
+      } else {
+        html += `
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:600">Grouped by week</div>
+          <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">`;
+
+        data.weekGroups.forEach(g => {
+          const startLabel = g.weekStart.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+          const endLabel = g.weekEnd.toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
+          html += `
+            <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;overflow:hidden">
+              <div style="padding:12px 16px;background:var(--card-alt);display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--border)">
+                <div>
+                  <div style="font-size:13px;font-weight:600;color:var(--text)">Week of ${startLabel} – ${endLabel}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${g.items.length} renewal${g.items.length === 1 ? '' : 's'}</div>
+                </div>
+                <div class="mono" style="font-size:16px;font-weight:700;color:var(--warn)">${fmt(g.total)}</div>
+              </div>`;
+          g.items.forEach((it, i) => {
+            const borderBot = i < g.items.length - 1 ? "border-bottom:1px solid var(--border);" : "";
+            const dateStr = it.renewStart.toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
+            html += `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;${borderBot}">
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:14px;font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${it.name}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${it.planLabel} · Renews ${dateStr}</div>
+                </div>
+                <div class="mono" style="font-size:14px;font-weight:700;color:var(--text);margin-left:12px">${fmt(it.principal)}</div>
+              </div>`;
+          });
+          html += `</div>`;
+        });
+
+        html += `</div>`;
+      }
+
+      html += `
+          <div style="font-size:11px;color:var(--text-dim);padding:0 4px 20px;line-height:1.6">
+            <strong style="color:var(--text)">Notes:</strong><br>
+            · Each borrower's renewal starts the day after their current cycle's last-slot due date.<br>
+            · Assumes they renew on the SAME plan, so the amount shown is their current plan's principal.<br>
+            · A renewal appears in the week that contains its renewal date (Mon-start weeks).
+          </div>
+        </div>`;
+
       app.innerHTML = html;
     }
 
