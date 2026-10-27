@@ -1129,7 +1129,17 @@
         `• Clear the comment so you can add new notes\n\n` +
         `Continue?`;
 
-      if (!confirm(msg)) return;
+      // For a completed loan, swap the confirmation message to match reality (no weeks to "mark paid").
+      const isCompletedLoan = remainingWeeks === 0;
+      const completedMsg =
+        `Renew "${oldB.name}" with ₹${newPlanObj.weekly.toLocaleString("en-IN")}/week plan?\n\n` +
+        `This will:\n` +
+        `• Keep the completed loan in Archive (marked as renewed)\n` +
+        `• Start a fresh ${newPlanObj.weeks}-${newPlanObj.isDaily ? 'day' : 'week'} loan with the same name (₹${newPlanObj.total.toLocaleString("en-IN")} total, ₹${newPlanObj.profit.toLocaleString("en-IN")} profit)\n\n` +
+        `Continue?`;
+      const effectiveMsg = isCompletedLoan ? completedMsg : msg;
+
+      if (!confirm(effectiveMsg)) return;
       renewBorrower(id, renewPlan, customPlanForBorrower);
     }
 
@@ -4064,10 +4074,17 @@
           </div>`;
       } else {
         html += `<button class="delete-btn" onclick="askDelete('${b.id}')">Remove Borrower</button>`;
-        // Renew option — only useful when there's at least one unpaid week
+        // Renew option — available for both active (close early + re-lend) and completed (fresh new loan with same name)
         const hasUnpaidWeeks = b.weeks.some(w => !isWeekPaid(w));
+        const alreadyRenewed = b.renewed === true;
         if (hasUnpaidWeeks) {
           html += `<button onclick="askRenew('${b.id}')" style="width:100%;background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:12px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">🔄 Renew Loan</button>`;
+        } else if (!alreadyRenewed) {
+          // Completed, not yet renewed → offer "Renew" that starts a fresh loan with same name
+          html += `<button onclick="askRenew('${b.id}')" style="width:100%;background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:12px;padding:14px;font-size:14px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">🔄 Renew — Start New Loan</button>`;
+        } else {
+          // Already renewed — show a disabled chip for clarity
+          html += `<div style="width:100%;background:var(--card-alt);color:var(--text-dim);border:1px solid var(--border);border-radius:12px;padding:14px;font-size:13px;text-align:center;font-family:'DM Sans',sans-serif">✓ Already renewed — new loan exists for ${b.name}</div>`;
         }
       }
       html += `</div></div>`;
