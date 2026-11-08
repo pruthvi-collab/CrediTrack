@@ -2143,7 +2143,7 @@
               </div>
               <div style="display:flex;align-items:center;gap:10px">
                 <div style="flex:1" class="progress-bar" style="height:6px"><div style="height:6px"><div class="progress-fill" style="width:100%;background:var(--success)"></div></div></div>
-                <span class="mono" style="font-size:12px;color:var(--success);font-weight:500;min-width:70px;text-align:right">${fmt(received)}</span>
+                <div style="text-align:right;min-width:70px"><div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px">Received</div><span class="mono" style="font-size:12px;color:var(--success);font-weight:500">${fmt(received)}</span></div>
               </div>
             </div>`;
         });
@@ -3846,7 +3846,7 @@
               <div style="text-align:right">
                 ${isComplete
                   ? `<span class="badge-complete">COMPLETE</span>`
-                  : `<span class="mono" style="font-size:15px;font-weight:700;color:var(--warn)">${fmt(balance)}</span>`
+                  : `<div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.8px;margin-bottom:1px">Pending</div><span class="mono" style="font-size:15px;font-weight:700;color:var(--warn)">${fmt(balance)}</span>`
                 }
               </div>
             </div>
@@ -3931,7 +3931,7 @@
             <input id="searchInput" type="text" placeholder="🔍 Search borrowers..." value="${searchQuery.replace(/"/g,'&quot;')}" oninput="setSearch(this.value)" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 14px;font-size:14px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box" />
           </div>
 
-          <div style="display:flex;gap:6px;margin-bottom:16px;overflow-x:auto;padding-bottom:4px">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
             ${chip("Newest", "newest", sortBy === "newest", "setSort")}
             ${chip("Oldest", "oldest", sortBy === "oldest", "setSort")}
             ${chip("Due Soon", "duesoon", sortBy === "duesoon", "setSort")}
