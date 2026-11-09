@@ -60,6 +60,72 @@
       --delete-border: rgba(220,38,38,0.2);
       --fab-text: #ffffff;
     }
+    :root[data-theme="glass"] {
+      --bg: #050913;
+      --card: rgba(255,255,255,0.055);
+      --card-alt: rgba(255,255,255,0.03);
+      --accent: #2dd4bf;
+      --accent-dim: #0f766e;
+      --warn: #fbbf24;
+      --danger: #fb7185;
+      --text: #f1f5f9;
+      --text-dim: #94a3b8;
+      --border: rgba(255,255,255,0.1);
+      --success: #34d399;
+      --input-bg: rgba(255,255,255,0.04);
+      --row-hover: rgba(45,212,191,0.06);
+      --row-active: rgba(45,212,191,0.12);
+      --plan-active-bg: rgba(45,212,191,0.12);
+      --badge-bg: rgba(52,211,153,0.2);
+      --delete-bg: rgba(251,113,133,0.1);
+      --delete-border: rgba(251,113,133,0.25);
+      --fab-text: #050913;
+    }
+    /* Ambient background orbs that make the frosted-glass blur meaningful */
+    :root[data-theme="glass"] body::before,
+    :root[data-theme="glass"] body::after {
+      content: '';
+      position: fixed;
+      border-radius: 50%;
+      filter: blur(100px);
+      opacity: 0.55;
+      pointer-events: none;
+      z-index: 0;
+    }
+    :root[data-theme="glass"] body::before {
+      width: 450px; height: 450px; top: -120px; left: -120px;
+      background: radial-gradient(circle, #14b8a6 0%, transparent 70%);
+    }
+    :root[data-theme="glass"] body::after {
+      width: 520px; height: 520px; bottom: -160px; right: -160px;
+      background: radial-gradient(circle, #6366f1 0%, transparent 70%);
+    }
+    :root[data-theme="glass"] .container { z-index: 1; }
+    :root[data-theme="glass"] .card,
+    :root[data-theme="glass"] .stat-card,
+    :root[data-theme="glass"] .plan-option,
+    :root[data-theme="glass"] .input-field,
+    :root[data-theme="glass"] .back-btn {
+      background: rgba(255,255,255,0.055);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid rgba(255,255,255,0.1);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 4px 24px rgba(0,0,0,0.2);
+    }
+    :root[data-theme="glass"] .card:active { transform: scale(0.98); }
+    :root[data-theme="glass"] .plan-option.active {
+      background: rgba(45,212,191,0.15);
+      border: 1px solid rgba(45,212,191,0.5);
+    }
+    :root[data-theme="glass"] .progress-bar { background: rgba(255,255,255,0.08); }
+    :root[data-theme="glass"] .fab {
+      background: linear-gradient(135deg, #2dd4bf, #14b8a6);
+      box-shadow: 0 8px 32px rgba(45,212,191,0.4), inset 0 1px 0 rgba(255,255,255,0.25);
+    }
+    :root[data-theme="glass"] .primary-btn {
+      background: linear-gradient(135deg, #2dd4bf, #14b8a6);
+      box-shadow: 0 4px 20px rgba(45,212,191,0.3), inset 0 1px 0 rgba(255,255,255,0.2);
+    }
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html, body {
@@ -383,6 +449,31 @@
       render();
     }
 
+    // Select all visible daily borrowers (used by the Daily filter quick action)
+    function selectAllDaily() {
+      selectionMode = true;
+      selectedIds.clear();
+      borrowers.forEach(b => {
+        if (isBorrowerDaily(b) && !b.weeks.every(isWeekPaid)) selectedIds.add(b.id);
+      });
+      render();
+    }
+
+    // Mark the next unpaid day for every active daily borrower with today's date — no prior selection needed.
+    function markAllDailyPaid() {
+      const dailyActive = borrowers.filter(b => isBorrowerDaily(b) && !b.weeks.every(isWeekPaid));
+      if (dailyActive.length === 0) return;
+      if (!confirm(`Mark today's day paid for all ${dailyActive.length} daily borrower${dailyActive.length === 1 ? '' : 's'}?`)) return;
+      const nowIso = new Date().toISOString();
+      dailyActive.forEach(b => {
+        const idx = b.weeks.findIndex(w => !isWeekPaid(w));
+        if (idx === -1) return;
+        b.weeks[idx] = { paid: true, date: nowIso };
+      });
+      saveData();
+      render();
+    }
+
     // ===== STORAGE =====
     function loadData() {
       try {
@@ -411,7 +502,8 @@
       document.documentElement.setAttribute("data-theme", theme);
     }
     function toggleTheme() {
-      theme = theme === "dark" ? "light" : "dark";
+      // Cycle: dark → glass → light → dark
+      theme = theme === "dark" ? "glass" : (theme === "glass" ? "light" : "dark");
       try { localStorage.setItem("creditrack-theme", theme); } catch (e) {}
       applyTheme();
       render();
@@ -1781,7 +1873,7 @@
                 </div>
                 <div style="flex:1">
                   <div style="font-size:16px;font-weight:600;color:var(--text)">Theme</div>
-                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Currently ${theme === 'dark' ? 'Dark' : 'Light'} mode · Tap to switch</div>
+                  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Currently ${theme === 'dark' ? 'Dark' : (theme === 'glass' ? 'Glass' : 'Light')} mode · Tap to switch</div>
                 </div>
               </div>
             </div>
@@ -3607,32 +3699,37 @@
         months[curMonthKey].profit = earnedProfit + projectedProfit;
       } catch (e) { /* fall back to simulation value */ }
 
-      // Walk day-by-day: find break-even dates AND capture month-end cumulative Net Outflow
+      // Walk day-by-day: build daily balance array + capture month-end cumulative Net Outflow.
+      // Then detect break-even dates with proper "permanent" semantics (never goes red again).
       const monthEndCum = {}; // key → cum at month-end
+      const dailyCum = new Array(dailyIn.length);
       let cum = currentNetOutflow;
       let firstZero = null;
-      let permZero = null;
-      let runNeg = 0;
       for (let d = 0; d < dailyIn.length; d++) {
         cum += dailyOut[d] - dailyIn[d];
-        if (cum <= 0) {
-          if (firstZero === null) {
-            firstZero = new Date(today.getTime() + d * msDay);
-          }
-          runNeg++;
-          if (runNeg >= 30 && permZero === null) {
-            permZero = new Date(today.getTime() + (d - 29) * msDay);
-          }
-        } else {
-          runNeg = 0;
+        dailyCum[d] = cum;
+        if (cum <= 0 && firstZero === null) {
+          firstZero = new Date(today.getTime() + d * msDay);
         }
-        // Snapshot cumulative at the LAST day of each month
         const curDay = new Date(today.getTime() + d * msDay);
         const nextDay = new Date(today.getTime() + (d + 1) * msDay);
         if (curDay.getMonth() !== nextDay.getMonth()) {
           const mk = `${curDay.getFullYear()}-${String(curDay.getMonth() + 1).padStart(2, '0')}`;
           monthEndCum[mk] = cum;
         }
+      }
+      // PERMANENT green = the day AFTER the last day the balance was > 0.
+      // Scan backwards: find the last index where balance was strictly positive; the next day is
+      // the first day that stays green forever within our simulation window.
+      // If the end-of-window balance is still > 0, there is no permanent green date yet.
+      let permZero = null;
+      if (dailyCum.length > 0 && dailyCum[dailyCum.length - 1] <= 0) {
+        let lastRedIdx = -1;
+        for (let d = dailyCum.length - 1; d >= 0; d--) {
+          if (dailyCum[d] > 0) { lastRedIdx = d; break; }
+        }
+        // First permanently-green day is lastRedIdx + 1 (day right after the last red day)
+        permZero = new Date(today.getTime() + (lastRedIdx + 1) * msDay);
       }
 
       // Monthly table rows (Profit + Cum Net Outflow at month-end)
@@ -3931,13 +4028,24 @@
             <input id="searchInput" type="text" placeholder="🔍 Search borrowers..." value="${searchQuery.replace(/"/g,'&quot;')}" oninput="setSearch(this.value)" style="width:100%;background:var(--input-bg);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 14px;font-size:14px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box" />
           </div>
 
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:16px">
+          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:${sortBy === 'daily' && !selectionMode ? '10' : '16'}px">
             ${chip("Newest", "newest", sortBy === "newest", "setSort")}
             ${chip("Oldest", "oldest", sortBy === "oldest", "setSort")}
             ${chip("Due Soon", "duesoon", sortBy === "duesoon", "setSort")}
             ${chip("Ends Soon", "endssoon", sortBy === "endssoon", "setSort")}
             ${chip("Daily", "daily", sortBy === "daily", "setSort")}
           </div>`;
+        // Daily filter: show a quick-action strip when at least one active daily borrower exists
+        if (sortBy === 'daily' && !selectionMode) {
+          const activeDailyCount = borrowers.filter(b => isBorrowerDaily(b) && !b.weeks.every(isWeekPaid)).length;
+          if (activeDailyCount > 0) {
+            html += `
+              <div style="display:flex;gap:8px;margin-bottom:16px">
+                <button onclick="selectAllDaily()" style="flex:1;background:var(--card-alt);color:var(--text);border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Select all (${activeDailyCount})</button>
+                <button onclick="markAllDailyPaid()" style="flex:1;background:rgba(34,211,167,0.12);color:var(--accent);border:1px solid rgba(34,211,167,0.3);border-radius:10px;padding:10px 12px;font-size:13px;font-weight:600;cursor:pointer;font-family:'DM Sans',sans-serif">Mark today paid</button>
+              </div>`;
+          }
+        }
       }
 
       if (borrowers.length === 0) {
