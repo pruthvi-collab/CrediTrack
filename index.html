@@ -1015,6 +1015,12 @@
     function goHome() { selectedId = null; currentView = "home"; confirmDeleteId = null; showProfitBreakdown = false; render(); }
     function goAdd() { currentView = "add"; newPlan = 5000; customPrincipal = ""; customWeekly = ""; customWeeks = ""; customFinalWeekly = ""; showProfitBreakdown = false; render(); setTimeout(() => document.getElementById("nameInput")?.focus(), 100); }
     function goMenu() { currentView = "menu"; render(); }
+    let metricView = "lent"; // "lent" | "received" | "pending"
+    function goMetricDetail(m) {
+      metricView = m;
+      currentView = "metricDetail";
+      render();
+    }
 
     function selectPlan(p) {
       if (p === "custom") {
@@ -1614,6 +1620,7 @@
       if (currentView === "calendar") return renderCalendar(app);
       if (currentView === "cashflow") return renderCashflow(app);
       if (currentView === "composition") return renderComposition(app);
+      if (currentView === "metricDetail") return renderMetricDetail(app);
       if (currentView === "cashforecast") return renderCashForecast(app);
       if (currentView === "inflowproj") { cashForecastTab = "inflow"; return renderCashForecast(app); }
       if (currentView === "renewaloutflow") { cashForecastTab = "outflow"; return renderCashForecast(app); }
@@ -1698,9 +1705,9 @@
 
           ${borrowers.length > 0 ? `
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:24px">
-              <div class="stat-card"><div class="stat-label">Lent</div><div class="stat-value" style="color:var(--text)">${fmt(totalLent)}</div></div>
-              <div class="stat-card"><div class="stat-label">Received</div><div class="stat-value" style="color:var(--success)">${fmt(totalReceived)}</div></div>
-              <div class="stat-card"><div class="stat-label">Pending</div><div class="stat-value" style="color:var(--warn)">${fmt(totalPending)}</div></div>
+              <div class="stat-card" onclick="goMetricDetail('lent')" style="cursor:pointer"><div class="stat-label">Lent</div><div class="stat-value" style="color:var(--text)">${fmt(totalLent)}</div></div>
+              <div class="stat-card" onclick="goMetricDetail('received')" style="cursor:pointer"><div class="stat-label">Received</div><div class="stat-value" style="color:var(--success)">${fmt(totalReceived)}</div></div>
+              <div class="stat-card" onclick="goMetricDetail('pending')" style="cursor:pointer"><div class="stat-label">Pending</div><div class="stat-value" style="color:var(--warn)">${fmt(totalPending)}</div></div>
             </div>
           ` : ''}
 
@@ -2084,6 +2091,110 @@
           ${borrowers.length === 0 ? `<div style="text-align:center;padding:40px 20px"><div style="font-size:14px;color:var(--text-dim)">No data yet</div></div>` : ''}
         </div>`;
 
+      app.innerHTML = html;
+    }
+
+    function renderMetricDetail(app) {
+      const activeBorrowers = borrowers.filter(b => !b.weeks.every(isWeekPaid));
+
+      const meta = {
+        lent: {
+          title: "Lent",
+          color: "var(--text)",
+          icon: "📤",
+          what: "Total principal you have put out across every active loan — the capital you currently have deployed.",
+          formula: "Σ (plan.principal) for every active borrower",
+          formulaNote: "Uses principal only, not plan total. A ₹5K/15w plan contributes ₹65,000; a ₹10K/10w plan contributes ₹85,000.",
+          per: b => getPlan(b).principal,
+          perLabel: b => `₹${getPlan(b).principal.toLocaleString("en-IN")}`,
+          perSubLabel: b => {
+            const p = getPlan(b);
+            return p.isDaily ? `₹${p.weekly}/day · ${p.weeks}d plan` : `₹${p.weekly}/w · ${p.weeks}w plan`;
+          },
+        },
+        received: {
+          title: "Received",
+          color: "var(--success)",
+          icon: "📥",
+          what: "Cash you have already collected from active borrowers so far in their current cycles.",
+          formula: "Σ (sum of paid slot amounts) for every active borrower",
+          formulaNote: "Only active loans count here. Cash from completed (archived) loans is not included.",
+          per: b => calcReceived(b),
+          perLabel: b => `₹${calcReceived(b).toLocaleString("en-IN")}`,
+          perSubLabel: b => {
+            const paid = b.weeks.filter(isWeekPaid).length;
+            const total = getPlan(b).weeks;
+            return `${paid}/${total} ${slotWord(b, true)} paid`;
+          },
+        },
+        pending: {
+          title: "Pending",
+          color: "var(--warn)",
+          icon: "⏳",
+          what: "Total still to receive from active borrowers until each current cycle completes — includes remaining principal AND future profit.",
+          formula: "Σ (plan.total − received) for every active borrower",
+          formulaNote: "Uses plan.total (principal + profit), so this is the full outstanding collection target, not just principal.",
+          per: b => getPlan(b).total - calcReceived(b),
+          perLabel: b => `₹${(getPlan(b).total - calcReceived(b)).toLocaleString("en-IN")}`,
+          perSubLabel: b => {
+            const paid = b.weeks.filter(isWeekPaid).length;
+            const total = getPlan(b).weeks;
+            const left = total - paid;
+            return `${left} ${slotWord(b, left !== 1)} left`;
+          },
+        },
+      }[metricView];
+
+      if (!meta) { goMenu(); return; }
+
+      // Sort borrowers descending by contribution
+      const rows = activeBorrowers
+        .map(b => ({ b, amt: meta.per(b) }))
+        .sort((a, b) => b.amt - a.amt);
+      const total = rows.reduce((s, r) => s + r.amt, 0);
+
+      let html = `
+        <div class="fade-in">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+            <button class="back-btn" onclick="goMenu()">←</button>
+            <div style="flex:1">
+              <h2 style="font-size:22px;font-weight:700;color:var(--text)">${meta.icon} ${meta.title}</h2>
+              <span style="font-size:13px;color:var(--text-dim)">Active book · ${rows.length} borrower${rows.length === 1 ? '' : 's'}</span>
+            </div>
+          </div>
+
+          <div style="background:var(--card-alt);border-radius:14px;padding:18px;margin-bottom:16px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Total</div>
+            <div class="mono" style="font-size:32px;font-weight:700;color:${meta.color}">${fmt(total)}</div>
+          </div>
+
+          <div style="background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;margin-bottom:16px">
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">What it is</div>
+            <div style="font-size:14px;color:var(--text);line-height:1.5;margin-bottom:14px">${meta.what}</div>
+            <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px">How it is calculated</div>
+            <div class="mono" style="font-size:13px;color:${meta.color};background:var(--input-bg);padding:10px 12px;border-radius:8px;margin-bottom:10px">${meta.formula}</div>
+            <div style="font-size:12px;color:var(--text-dim);line-height:1.5">${meta.formulaNote}</div>
+          </div>
+
+          <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;font-weight:600">Borrower breakdown · Tap to open</div>
+          <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:24px">`;
+
+      rows.forEach(({ b, amt }) => {
+        const pct = total > 0 ? (amt / total) * 100 : 0;
+        html += `
+            <div class="card" onclick="goDetail('${b.id}')" style="padding:12px 14px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px">
+                <div style="flex:1;min-width:0">
+                  <div style="font-size:14px;font-weight:600;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${b.name}</div>
+                  <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${meta.perSubLabel(b)}</div>
+                </div>
+                <div class="mono" style="font-size:14px;font-weight:700;color:${meta.color};white-space:nowrap">${meta.perLabel(b)}</div>
+              </div>
+              <div class="progress-bar" style="height:4px"><div class="progress-fill" style="width:${pct}%;background:${meta.color};opacity:0.7"></div></div>
+            </div>`;
+      });
+
+      html += `</div></div>`;
       app.innerHTML = html;
     }
 
