@@ -331,22 +331,44 @@
       return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
     }
 
+    // Returns the ISO date string to anchor this borrower's schedule on.
+    // Priority: manual firstDueDate (if set) > Week 1 paid date > createdAt.
+    // ALL schedule / projection / due-date code should route through this helper.
+    function getScheduleAnchorIso(b) {
+      if (b.firstDueDate) return b.firstDueDate;
+      if (isWeekPaid(b.weeks[0])) return getWeekDate(b.weeks[0]);
+      return b.createdAt;
+    }
+
+    // Set / clear the manual first-week due date for a borrower.
+    function setFirstDueDate(id, dateStr) {
+      const b = borrowers.find(x => x.id === id);
+      if (!b) return;
+      if (dateStr && dateStr.length >= 10) {
+        // Normalize to UTC midnight ISO so the rest of the code can compare cleanly
+        b.firstDueDate = new Date(dateStr + "T00:00:00.000Z").toISOString();
+      } else {
+        delete b.firstDueDate;
+      }
+      saveData();
+      render();
+    }
+
     function getOverdueStatus(b) {
-      const firstWeek = b.weeks[0];
-      // Need Week 1 to be paid to start the clock
-      if (!isWeekPaid(firstWeek)) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
+      // Start the clock when EITHER Week 1 is paid OR a manual first-week due date is set.
+      const hasAnchor = isWeekPaid(b.weeks[0]) || !!b.firstDueDate;
+      if (!hasAnchor) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
 
       // Find first unpaid week
       const nextIdx = b.weeks.findIndex(w => !isWeekPaid(w));
       if (nextIdx === -1) return { overdue: false, daysLate: 0, nextWeekNum: 0 };
 
-      // Expected date = slot 1 date + (nextIdx + skipCount) * interval days
-      // interval = 7 for weekly plans, 1 for daily plans
+      // Expected date = anchor + (nextIdx + skipCount) * interval days
       const skipCount = getSkipCount(b);
       const interval = slotIntervalDays(b);
-      const week1Date = new Date(getWeekDate(firstWeek));
-      const expectedDate = new Date(week1Date);
-      expectedDate.setDate(week1Date.getDate() + (nextIdx + skipCount) * interval);
+      const anchorDate = new Date(getScheduleAnchorIso(b));
+      const expectedDate = new Date(anchorDate);
+      expectedDate.setDate(anchorDate.getDate() + (nextIdx + skipCount) * interval);
 
       const today = new Date();
       today.setHours(0, 0, 0, 0);
@@ -1391,7 +1413,7 @@
           const remB = planB.weeks - b.weeks.filter(isWeekPaid).length;
           if (remA !== remB) return remA - remB;
           const anchorA = isWeekPaid(a.weeks[0]) ? getWeekDate(a.weeks[0]) : a.createdAt;
-          const anchorB = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
+          const anchorB = getScheduleAnchorIso(b);
           const endA = new Date(anchorA); endA.setUTCDate(endA.getUTCDate() + planA.weeks * slotIntervalDays(a));
           const endB = new Date(anchorB); endB.setUTCDate(endB.getUTCDate() + planB.weeks * slotIntervalDays(b));
           return endA - endB;
@@ -3552,7 +3574,7 @@
         if (!plan || plan.weeks <= 0) return;
         const interval = slotIntervalDays(b);
         const w1 = b.weeks[0];
-        const anchorIso = isWeekPaid(w1) ? getWeekDate(w1) : b.createdAt;
+        const anchorIso = getScheduleAnchorIso(b);
         const anchor = new Date(anchorIso);
         anchor.setHours(0, 0, 0, 0);
         const cycleEnd = new Date(anchor.getTime() + (plan.weeks - 1) * interval * msDay);
@@ -3718,7 +3740,7 @@
 
         // Anchor on Week 1 paid date if present, else createdAt
         const week1 = b.weeks[0];
-        const anchorISO = isWeekPaid(week1) ? getWeekDate(week1) : b.createdAt;
+const anchorISO = getScheduleAnchorIso(b);
         const anchor = new Date(anchorISO);
         anchor.setHours(0, 0, 0, 0);
         const paidSlots = b.weeks.filter(isWeekPaid).length;
@@ -3992,7 +4014,7 @@
         const showNearingDue = !overdue.overdue && !isComplete && daysSince !== null && daysSince >= 5;
 
         // Expected completion: anchor on Week 1 paid date if available, else credited date
-        const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
+        const anchorIso = getScheduleAnchorIso(b);
         const expectedEnd = new Date(anchorIso);
         expectedEnd.setUTCDate(expectedEnd.getUTCDate() + plan.weeks * slotIntervalDays(b));
 
@@ -4174,6 +4196,11 @@
                 <span>Credited on</span>
                 <input type="date" value="${toUtcDateStr(b.createdAt)}" onchange="updateCreditedDate('${b.id}',this.value)" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:var(--accent);font-size:11px;padding:3px 6px;font-family:'DM Sans',sans-serif;outline:none" />
               </div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:4px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                <span>First week due</span>
+                <input type="date" value="${b.firstDueDate ? toUtcDateStr(b.firstDueDate) : ''}" onchange="setFirstDueDate('${b.id}',this.value)" style="background:var(--input-bg);border:1px solid var(--border);border-radius:6px;color:${b.firstDueDate ? 'var(--accent)' : 'var(--text-dim)'};font-size:11px;padding:3px 6px;font-family:'DM Sans',sans-serif;outline:none" />
+                ${b.firstDueDate ? `<button onclick="setFirstDueDate('${b.id}','')" style="background:transparent;border:none;color:var(--text-dim);font-size:11px;cursor:pointer;padding:0;text-decoration:underline">clear</button>` : '<span style="color:var(--text-dim);font-size:10px;opacity:0.7">(optional)</span>'}
+              </div>
               ${(() => {
                 if (isComplete) {
                   // Actual completion = date of last paid week
@@ -4182,7 +4209,7 @@
                   return `<div style="font-size:11px;color:var(--text-dim);margin-top:4px">Completed on: <span style="color:var(--success)">${fmtDate(completionIso)}</span></div>`;
                 }
                 // Expected completion: anchor on Week 1 payment date if available, else credited date
-                const anchorIso = isWeekPaid(b.weeks[0]) ? getWeekDate(b.weeks[0]) : b.createdAt;
+                const anchorIso = getScheduleAnchorIso(b);
                 const anchor = new Date(anchorIso);
                 const expectedEnd = new Date(anchor);
                 expectedEnd.setUTCDate(anchor.getUTCDate() + plan.weeks * slotIntervalDays(b));
