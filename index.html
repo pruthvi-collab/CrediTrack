@@ -384,6 +384,27 @@
       };
     }
 
+    // Days from TODAY to the next scheduled due date, computed from the
+    // schedule anchor (NOT from when the last payment was credited). This
+    // matches Cash Forecast / Expected Completion math so a one-off late
+    // payment doesn't shift the whole schedule forward.
+    //   - returns 0 or negative if already due / overdue
+    //   - returns positive number of days if due in the future
+    //   - returns null if there are no more slots to pay
+    function getDaysUntilNextDue(b) {
+      const nextIdx = b.weeks.findIndex(w => !isWeekPaid(w));
+      if (nextIdx === -1) return null; // all paid
+      const skipCount = getSkipCount(b);
+      const interval = slotIntervalDays(b);
+      const anchorDate = new Date(getScheduleAnchorIso(b));
+      anchorDate.setHours(0, 0, 0, 0);
+      const dueDate = new Date(anchorDate);
+      dueDate.setDate(anchorDate.getDate() + (nextIdx + skipCount) * interval);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return Math.floor((dueDate - today) / (1000 * 60 * 60 * 24));
+    }
+
     let borrowers = [];
     let currentView = "home";
     let selectedId = null;
@@ -1388,20 +1409,25 @@
       } else if (sortBy === "oldest") {
         list.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
       } else if (sortBy === "duesoon") {
-        // Urgency ranking: overdue first (most days late = highest), then by days since last payment
-        // Completed borrowers are filtered out by getFilteredBorrowers anyway, but still safe
+        // Urgency ranking (anchored to the SCHEDULE, same as Cash Forecast):
+        //   1. Overdue first — most days late = highest
+        //   2. Then by nearest scheduled next-due date (not by when they last paid)
+        // This way "due today" always outranks "due in 2 days", even if the
+        // earlier borrower paid their last week 2 days late and the later
+        // borrower paid 5 days ago but on an earlier schedule.
         list.sort((a, b) => {
           const aOver = getOverdueStatus(a);
           const bOver = getOverdueStatus(b);
-          // Overdue borrowers always rank above non-overdue ones
           if (aOver.overdue !== bOver.overdue) return aOver.overdue ? -1 : 1;
-          // Both overdue → larger daysLate first
           if (aOver.overdue && bOver.overdue) return bOver.daysLate - aOver.daysLate;
-          // Neither overdue → larger daysSinceLastPayment first (more "at risk")
-          const aDays = getDaysSinceLastPayment(a);
-          const bDays = getDaysSinceLastPayment(b);
-          // Null = no payments yet, treat as 0 (least urgent)
-          return (bDays || 0) - (aDays || 0);
+          // Neither overdue → smaller daysUntilNextDue first (nearer due = more urgent)
+          const aDays = getDaysUntilNextDue(a);
+          const bDays = getDaysUntilNextDue(b);
+          // Null = already fully paid (shouldn't occur here, but push to bottom)
+          if (aDays === null && bDays === null) return 0;
+          if (aDays === null) return 1;
+          if (bDays === null) return -1;
+          return aDays - bDays;
         });
       } else if (sortBy === "endssoon") {
         // Rank by fewest remaining slots to complete the plan
