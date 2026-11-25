@@ -325,10 +325,15 @@
         }
       });
       if (latestMs === 0) return null;
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diff = today.getTime() - latestMs;
-      return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)));
+      // Full 24-hour periods elapsed since the payment timestamp.
+      // The earlier version subtracted `today.setHours(0,0,0,0)` which pulled
+      // "now" back to midnight. That undercounted any payment logged late at
+      // night (e.g. a tap at 00:06 IST → stored as 18:36 UTC the previous day
+      // → subtracting 00:00 IST midnight leaves ~5d 23h 54min → floor to 5d
+      // instead of 6d). Comparing raw timestamps gives the number everyone
+      // intuitively reads off the clock.
+      const diffMs = Date.now() - latestMs;
+      return Math.max(0, Math.floor(diffMs / 86400000));
     }
 
     // Returns the ISO date string to anchor this borrower's schedule on.
