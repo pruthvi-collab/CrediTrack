@@ -1414,31 +1414,24 @@
       } else if (sortBy === "oldest") {
         list.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
       } else if (sortBy === "duesoon") {
-        // HIDE borrowers that have NO schedule yet: Week 1 not paid AND no
-        // manual firstDueDate. These are typically brand-new entries where
-        // the first instalment hasn't been collected, so there is no "next
-        // due" to rank them against. They stay visible under Newest/Oldest.
-        list = list.filter(b => isWeekPaid(b.weeks[0]) || !!b.firstDueDate);
-
-        // Urgency ranking (anchored to the SCHEDULE, same as Cash Forecast):
-        //   1. Overdue first — most days late = highest
-        //   2. Then by nearest scheduled next-due date (not by when they last paid)
-        // This way "due today" always outranks "due in 2 days", even if the
-        // earlier borrower paid their last week 2 days late and the later
-        // borrower paid 5 days ago but on an earlier schedule.
+        // Ranking (chip-aligned — matches the visible "Xd since last" value):
+        //   1. Overdue first (per schedule) — most days late at top
+        //   2. Then by days-since-last payment, descending (biggest chip wins)
+        //   3. Borrowers with no payments yet AND no firstDueDate sink to the
+        //      bottom — nothing to measure against, but they stay visible so
+        //      you can tap +W1 when ready.
         list.sort((a, b) => {
           const aOver = getOverdueStatus(a);
           const bOver = getOverdueStatus(b);
           if (aOver.overdue !== bOver.overdue) return aOver.overdue ? -1 : 1;
           if (aOver.overdue && bOver.overdue) return bOver.daysLate - aOver.daysLate;
-          // Neither overdue → smaller daysUntilNextDue first (nearer due = more urgent)
-          const aDays = getDaysUntilNextDue(a);
-          const bDays = getDaysUntilNextDue(b);
-          // Null = already fully paid (shouldn't occur here, but push to bottom)
+          const aDays = getDaysSinceLastPayment(a);
+          const bDays = getDaysSinceLastPayment(b);
+          // No payments yet → null → push to the bottom
           if (aDays === null && bDays === null) return 0;
           if (aDays === null) return 1;
           if (bDays === null) return -1;
-          return aDays - bDays;
+          return bDays - aDays; // larger days-since-last first
         });
       } else if (sortBy === "endssoon") {
         // Rank by fewest remaining slots to complete the plan
